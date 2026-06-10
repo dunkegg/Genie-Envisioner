@@ -175,3 +175,7 @@ logs/
 output/
 evaluation_results/
 evaluation_results/*
+
+lerobot_data/
+checkpoints/
+OUTPUTS/
