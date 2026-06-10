@@ -558,7 +558,7 @@ class Trainer:
 
                     mem_latents = rearrange(mem_latents, '(b v m) (h w) c -> (b v) c m h w', b=batch_size, m=mem_size, h=latent_height)
                     future_video_latents = rearrange(future_video_latents, '(b v) (f h w) c -> (b v) c f h w',b=batch_size,h=latent_height,w=latent_width)
-                    latents = torch.cat((mem_latents, future_video_latents), dim=2)
+                    latents = torch.cat((mem_latents, future_video_latents), dim=2)  #todo : no actions input
 
                     video_attention_mask = None
                     latents = rearrange(latents, 'bv c f h w -> bv (f h w) c')

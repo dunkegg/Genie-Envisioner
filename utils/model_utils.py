@@ -55,15 +55,53 @@ def _find_mismatched_keys(
 
     return mismatched_keys
 
-def load_checkpoints(model, pretrained_ckpt, strict=False, ignore_mismatched_sizes=True):
-    """
-    Load safetensors model state dict file.
-    """
+# def load_checkpoints(model, pretrained_ckpt, strict=False, ignore_mismatched_sizes=True):
+#     """
+#     Load safetensors model state dict file.
+#     """
 
-    # In this case we have many shards to load
+#     # In this case we have many shards to load
+#     if os.path.isdir(pretrained_ckpt):
+#         state_dict = load_index_file(os.path.join(pretrained_ckpt, "diffusion_pytorch_model.safetensors.index.json"))
+#     # in this case we need give the file path
+#     else:
+#         state_dict = load_file(pretrained_ckpt)
+
+#     if strict:
+#         model.load_state_dict(state_dict, strict=True)
+#     else:
+#         if ignore_mismatched_sizes:
+#             model_state_dict = model.state_dict()
+#             mismatched_keys = _find_mismatched_keys(
+#                 state_dict,
+#                 model_state_dict,
+#                 list(state_dict.keys()),
+#             )
+#         else:
+#             mismatched_keys = []
+#         missing, unexpected = model.load_state_dict(state_dict, strict=False)
+
+#         print(">>> mismatched_keys: %s" % mismatched_keys)
+#         print(">>> missing: %s" % missing)
+#         print(">>> unexpected: %s" % unexpected)
+#     print(">>> Loaded weights from pretrained checkpoint: %s"%pretrained_ckpt)
+
+def load_checkpoints(model, pretrained_ckpt, strict=False, ignore_mismatched_sizes=True):
+    from safetensors.torch import load_file
+    import os
+
     if os.path.isdir(pretrained_ckpt):
-        state_dict = load_index_file(os.path.join(pretrained_ckpt, "diffusion_pytorch_model.safetensors.index.json"))
-    # in this case we need give the file path
+        index_file = os.path.join(pretrained_ckpt, "diffusion_pytorch_model.safetensors.index.json")
+        single_file = os.path.join(pretrained_ckpt, "diffusion_pytorch_model.safetensors")
+
+        if os.path.exists(index_file):
+            state_dict = load_index_file(index_file)
+        elif os.path.exists(single_file):
+            state_dict = load_file(single_file)
+        else:
+            raise FileNotFoundError(
+                f"No diffusion_pytorch_model.safetensors(.index.json) found in {pretrained_ckpt}"
+            )
     else:
         state_dict = load_file(pretrained_ckpt)
 
@@ -79,14 +117,14 @@ def load_checkpoints(model, pretrained_ckpt, strict=False, ignore_mismatched_siz
             )
         else:
             mismatched_keys = []
+
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
 
-        print(">>> mismatched_keys: %s" % mismatched_keys)
-        print(">>> missing: %s" % missing)
-        print(">>> unexpected: %s" % unexpected)
-    print(">>> Loaded weights from pretrained checkpoint: %s"%pretrained_ckpt)
+        print(">>> mismatched_keys:", mismatched_keys[:50] if isinstance(mismatched_keys, list) else mismatched_keys)
+        print(">>> missing:", len(missing), missing[:50])
+        print(">>> unexpected:", len(unexpected), unexpected[:50])
 
-
+    print(f">>> Loaded weights from pretrained checkpoint: {pretrained_ckpt}")
 
 def load_condition_models(
     tokenizer_class,

@@ -112,13 +112,14 @@ flow_logit_mean: 0.0
 flow_logit_std: 1.0
 flow_mode_scale: 1.29
 
-pixel_wise_timestep: True #todo
+pixel_wise_timestep: False #todo
 
 diffusion_model:
   model_path: checkpoints/Cosmos-Predict2-2B-Video2World/transformer
 
   config:
-    in_channels: 26  # 16 (vae) + 3 (traj) + 6 (raymap) + 1 (padding mask)
+    # in_channels: 26  # 16 (vae) + 3 (traj) + 6 (raymap) + 1 (padding mask) #todo
+    in_channels: 17  # 16 (vae) + 1 (padding mask)
     out_channels: 16
     num_attention_heads: 16
     attention_head_dim: 128
