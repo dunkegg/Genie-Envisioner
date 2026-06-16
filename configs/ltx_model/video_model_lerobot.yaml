@@ -4,7 +4,7 @@ report_to: None
 tracker_name: ltx_trainer
 
 logging_dir: logs
-output_dir: OUTPUTS/logs
+output_dir: OUTPUTS/ltx
 pretrained_model_name_or_path: checkpoints/LTX-Video
 
 ###
@@ -35,9 +35,9 @@ train_mode: 'video_only'
 action_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
-train_steps: 1000000
+train_steps: 100000
 train_epochs: 10000
-steps_to_save: 2000
+steps_to_save: 20000
 steps_to_log: 20
 steps_to_val: 2000
 

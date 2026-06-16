@@ -271,7 +271,17 @@ class CustomLeRobotDataset(Dataset):
             frame_indexes = action_indexes[::self.video_temporal_stride]
             action_indexes = np.clip(action_indexes, a_min=0, a_max=total_frames-1)
             frame_indexes = np.clip(frame_indexes, a_min=0, a_max=total_frames-1)
-            return self.fix_mem_idx + frame_indexes, self.fix_mem_idx + action_indexes
+            # return self.fix_mem_idx + frame_indexes, self.fix_mem_idx + action_indexes #wzj fix
+            fix_mem_idx = np.asarray(self.fix_mem_idx).reshape(-1)
+            fix_mem_idx = np.clip(fix_mem_idx, a_min=0, a_max=total_frames - 1).astype(np.int64)
+
+            # 如果 fix_mem_idx 是历史帧数组，则 future 从最后一个历史帧之后开始
+            start_idx = int(fix_mem_idx[-1])
+
+            vid_indexes = np.concatenate([fix_mem_idx, start_idx + frame_indexes])
+            act_indexes = start_idx + action_indexes
+
+            return vid_indexes, act_indexes
 
         chunk_end = random.randint(self.action_chunk, total_frames+self.action_chunk)
 

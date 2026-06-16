@@ -110,7 +110,8 @@ class Inferencer:
             self.args.val_data_class, self.args.val_data_class_path
         )
         
-        self.args.data['val'].update({"fix_epiidx": 0, "fix_sidx":0, "fix_mem_idx":[0,0,0,0]})
+        # self.args.data['val'].update({"fix_epiidx": 0, "fix_sidx":0, "fix_mem_idx":[0,0,0,0]}) #wzj fix
+        self.args.data['val'].update({"fix_epiidx": 0, "fix_sidx":0, "fix_mem_idx":None})
 
         self.val_dataset = val_dataset_class(**self.args.data['val'])
         self.val_dataloader = torch.utils.data.DataLoader(
@@ -215,9 +216,34 @@ class Inferencer:
         if self.args.return_video:
             n_chunk_action = 1
 
+        need_len = (
+            self.args.data["train"]["n_previous"]
+            + max(
+                self.args.data["train"]["chunk"],
+                self.args.data["train"]["action_chunk"] if self.args.return_action else self.args.data["train"]["chunk"]
+            )
+        )
+        ####
+        
+        dataset_root = os.path.join(
+            self.args.data["val"]["data_roots"][0],
+            self.args.data["val"]["domains"][0],
+        )
+        episodes_path = os.path.join(dataset_root, "meta", "episodes.jsonl")
 
+        with open(episodes_path, "r") as f:
+            episode_infos = [json.loads(line) for line in f if line.strip()]
+
+        print(self.val_dataloader.dataset.__dict__.keys())
         for i_validation in range(n_validation):
-            
+            total_frames = episode_infos[i_validation]["length"]
+
+            if total_frames < need_len:
+                print(f"skip {i_validation}: length={total_frames}, need={need_len}")
+                continue
+
+
+
             self.val_dataloader.dataset.fix_epiidx = i_validation
 
             if self.args.return_action:
@@ -315,10 +341,22 @@ class Inferencer:
 
                 image = None
 
-                ### prepare for next chunk action prediction
-                self.val_dataloader.dataset.fix_sidx += self.args.data['train']['action_chunk']
-                self.val_dataloader.dataset.fix_mem_idx = x = (np.linspace(0, self.val_dataloader.dataset.fix_sidx-1, self.args.data['train']['n_previous']).round().astype(np.int16)).tolist()
-
+                # ### prepare for next chunk action prediction
+                # self.val_dataloader.dataset.fix_sidx += self.args.data['train']['action_chunk']
+                # self.val_dataloader.dataset.fix_mem_idx = x = (np.linspace(0, self.val_dataloader.dataset.fix_sidx-1, self.args.data['train']['n_previous']).round().astype(np.int16)).tolist()
+                ### prepare for next chunk action prediction wzj fix
+                if self.args.return_action:
+                    self.val_dataloader.dataset.fix_sidx += self.args.data['train']['action_chunk']
+                    self.val_dataloader.dataset.fix_mem_idx = (
+                        np.linspace(
+                            0,
+                            self.val_dataloader.dataset.fix_sidx - 1,
+                            self.args.data['train']['n_previous']
+                        )
+                        .round()
+                        .astype(np.int16)
+                        .tolist()
+                    )
 
             if self.args.return_action:
                 x_axis = np.arange(gt_actions_arr_all.shape[0])

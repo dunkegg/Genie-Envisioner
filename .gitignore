@@ -179,3 +179,4 @@ evaluation_results/*
 lerobot_data/
 checkpoints/
 OUTPUTS/
+test_result/
