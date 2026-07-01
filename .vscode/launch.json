@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+        {
+        "name": "h5_2_lerobot",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/h5_2_lerobot_3d.py",
+        "cwd": "${workspaceFolder}",
+        "python": "/opt/conda/envs/genie_envisioner/bin/python",
+        "justMyCode": false,
+        "args": [
+        ],
+        "console": "integratedTerminal",
+        },        
+  ]
+}

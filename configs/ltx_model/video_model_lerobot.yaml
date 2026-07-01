@@ -113,7 +113,7 @@ diffusion_model:
     patch_size_t: 1
     qk_norm: rms_norm_across_heads
     action_expert: false
-    action_in_channels: 8
+    action_in_channels: 2
     action_num_attention_heads: 16
     action_attention_head_dim: 32
 
@@ -121,7 +121,7 @@ data:
 ### more details can be found in data/utils/*_dataset.py
   train:
     data_roots: ["lerobot_data"]
-    domains: ["move_to_object", ]
+    domains: ["habitat_lerobot", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -129,18 +129,18 @@ data:
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
     state_key:    "observation.state" 
-    chunk: 9
-    action_chunk: 54
-    n_previous: 4
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: "lerobot_data/move_to_object/statistics.json"
+    stat_file: "lerobot_data/habitat_lerobot/statistics.json"
   val:
     data_roots: ["lerobot_data"]
-    domains: ["move_to_object", ]
+    domains: ["habitat_lerobot", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -148,15 +148,15 @@ data:
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
     state_key:    "observation.state" 
-    chunk: 9
-    action_chunk: 54
-    n_previous: 4
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: "lerobot_data/move_to_object/statistics.json"
+    stat_file: "lerobot_data/habitat_lerobot/statistics.json"
 
 
 use_color_jitter: true

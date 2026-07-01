@@ -16,7 +16,6 @@ polars==1.32.2
 prodigyopt==1.1.2
 pytest==8.3.5
 PyYAML==6.0.2
-PyYAML==6.0.2
 rich==14.1.0
 scipy==1.15.3
 tqdm==4.67.1

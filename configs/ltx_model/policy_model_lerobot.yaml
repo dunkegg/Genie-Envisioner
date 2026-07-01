@@ -30,7 +30,7 @@ pipeline_class: CustomPipeline
 
 # 
 return_action: true
-return_video: true
+return_video: false
 train_mode: 'action_full'
 action_loss_scale: 1.0
 
