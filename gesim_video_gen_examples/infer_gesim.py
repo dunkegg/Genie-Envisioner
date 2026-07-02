@@ -206,6 +206,10 @@ def infer(
     extrinsics = torch.FloatTensor(extrinsics)
     intrinsics = torch.FloatTensor(intrinsics)
     actions = torch.FloatTensor(actions)
+    # 计算motion delta，shape: [T-1, 14]
+    motion_deltas = actions[1:] - actions[:-1]
+    # 加batch维度: [1, T-1, 14]
+    motion_deltas = motion_deltas.unsqueeze(0)
 
     os.makedirs(save_path, exist_ok=True)
 
@@ -268,6 +272,8 @@ def infer(
             merge_view_into_width=False,
             output_type="pt",
             postprocess_video=False,
+            motion_deltas=motion_deltas[:, args.data['train']['n_previous']+ichunk*args.data['train']['chunk'] : 
+                                   args.data['train']['n_previous']+(ichunk+1)*args.data['train']['chunk']],
         )['frames'] # preds: v c t h w , range -1 to 1 (could exceed range)
 
         videos = torch.cat((videos, preds.data.cpu()), dim=2) # v c t h w

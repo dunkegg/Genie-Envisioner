@@ -346,6 +346,23 @@ class MultiViewCosmosTransformer3DModel(ModelMixin, ConfigMixin):
                                             # nn.Linear(hidden_size, 6 * hidden_size, bias=True)
                                             nn.Linear(hidden_size, 3 * hidden_size, bias=True)
                                         )
+        # Motion Vector Conditioning Encoder
+        # action_dim: 14 for dual-arm (6DoF * 2)
+        # hidden_size: num_attention_heads * attention_head_dim
+        if getattr(self.config, 'use_motion_conditioning', False):
+            action_dim = getattr(self.config, 'action_dim', 14)
+            motion_hidden_dim = getattr(self.config, 'motion_hidden_dim', 256)
+            
+            # MLP encoder: delta(14) -> motion_hidden_dim
+            self.motion_mlp = nn.Sequential(
+                nn.Linear(action_dim, motion_hidden_dim),
+                nn.SiLU(),
+                nn.Linear(motion_hidden_dim, motion_hidden_dim),
+                nn.SiLU(),
+            )
+            # Linear projection: motion_hidden_dim -> text_embed_dim
+            # 必须对齐到text_embed_dim，因为cross-attn的KV来自encoder_hidden_states
+            self.motion_proj = nn.Linear(motion_hidden_dim, text_embed_dim)
 
         # 4. Transformer Blocks
         self.transformer_blocks = nn.ModuleList(
@@ -413,6 +430,7 @@ class MultiViewCosmosTransformer3DModel(ModelMixin, ConfigMixin):
         video_states_buffer=None,
         video_attention_mask: torch.Tensor = None,
         history_action_state: torch.Tensor = None,
+        motion_deltas: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
 
@@ -504,6 +522,29 @@ class MultiViewCosmosTransformer3DModel(ModelMixin, ConfigMixin):
 
             action_temb, action_embedded_timestep, action_rotary_emb, action_hidden_states = preprocessing_action_states(self, action_states, action_timestep)
 
+        # Motion conditioning
+        motion_tokens = None
+        if getattr(self.config, 'use_motion_conditioning', False) and motion_deltas is not None:
+            # motion_deltas: [B, K, action_dim]，K是步数
+            motion_tokens = self.motion_mlp(motion_deltas)       # [B, K, motion_hidden_dim]
+            motion_tokens = self.motion_proj(motion_tokens)       # [B, K, text_embed_dim]
+            
+            # concat到text embedding上，作为cross-attn的KV
+            # encoder_hidden_states: [B, 512, text_embed_dim]
+            # motion_tokens:          [B, K,   text_embed_dim]
+            encoder_hidden_states_with_motion = torch.cat(
+                [encoder_hidden_states, motion_tokens], dim=1
+            )  # [B, 512+K, text_embed_dim]
+            if encoder_attention_mask is not None and motion_tokens is not None:
+                # motion部分不需要mask（全attend）
+                motion_mask = torch.ones(
+                    encoder_attention_mask.shape[0], 1, 1, motion_tokens.shape[1],
+                    device=encoder_attention_mask.device,
+                    dtype=encoder_attention_mask.dtype
+                )
+                encoder_attention_mask = torch.cat([encoder_attention_mask, motion_mask], dim=-1)
+        else:
+            encoder_hidden_states_with_motion = encoder_hidden_states
 
         # 5. Transformer blocks
         for block_idx, block in enumerate(self.transformer_blocks):
@@ -543,7 +584,7 @@ class MultiViewCosmosTransformer3DModel(ModelMixin, ConfigMixin):
                 if return_video or store_buffer:
                     hidden_states = block(
                         hidden_states=hidden_states,
-                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_hidden_states=encoder_hidden_states_with_motion,
                         embedded_timestep=embedded_timestep,
                         temb=temb,
                         image_rotary_emb=image_rotary_emb,

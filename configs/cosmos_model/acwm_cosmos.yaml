@@ -5,8 +5,8 @@ tracker_name: cosmos2_trainer
 
 logging_dir: logs
 
-pretrained_model_name_or_path: PATH_TO_PRETRAINED_WEIGHTS_OF_VAE_AND_TOKENIZER
-tokenizer_pretrained_model_name_or_path: PATH_TO_PRETRAINED_WEIGHTS_OF_VAE_AND_TOKENIZER
+pretrained_model_name_or_path: "/mnt/pfs/3zpd5q/code/zb/Genie-Envisioner/pretrained_models/Cosmos-Predict2-2B-Video2World"
+tokenizer_pretrained_model_name_or_path: "/mnt/pfs/3zpd5q/code/zb/Genie-Envisioner/pretrained_models/Cosmos-Predict2-2B-Video2World"
 
 
 ### 
@@ -56,7 +56,7 @@ pixel_wise_timestep: False
 
 
 diffusion_model:
-  model_path: LOCAL_PATH/TO/ge_sim_cosmos_v0.1.safetensors
+  model_path: "/mnt/pfs/3zpd5q/code/zb/Genie-Envisioner/pretrained_models/ge_sim_cosmos_v0.1.safetensors"
 
   config:
     in_channels: 26  # 16 (vae) + 3 (traj) + 6 (raymap) + 1 (padding mask)
@@ -78,6 +78,7 @@ diffusion_model:
     action_num_attention_heads: 16
     action_attention_head_dim: 32
     action_rope_dim: 32
+    use_motion_conditioning: False
 
 
 data:

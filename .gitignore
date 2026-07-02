@@ -180,3 +180,5 @@ lerobot_data/
 checkpoints/
 OUTPUTS/
 test_result/
+pretrained_models/
+gesim_video_gen_examples/

@@ -633,6 +633,7 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
                     n_view=n_view,
                     num_frames=n_fut+n_prev,
                     return_video=True,
+                    motion_deltas=motion_deltas,
                 )[0]['video']
 
                 noise_pred = noise_pred[:, :, n_prev:]  # remove memory
