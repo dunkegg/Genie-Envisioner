@@ -560,6 +560,28 @@ class Trainer:
                     future_video_latents = rearrange(future_video_latents, '(b v) (f h w) c -> (b v) c f h w',b=batch_size,h=latent_height,w=latent_width)
                     latents = torch.cat((mem_latents, future_video_latents), dim=2)  #todo : no actions input
 
+                    # ######################################### action input
+                    # # add action condition for video generation
+                    # if getattr(self.args, "action_cond_video", False):
+                    #     actions = batch["actions"].to(accelerator.device, dtype=weight_dtype).contiguous()  # [B, T, A]
+
+                    #     # 取和 latent_frames 对齐的一段动作；简单版先采样/截断
+                    #     act = actions[:, :latent_frames, :]  # [B, F, A]
+
+                    #     # 如果动作长度不够，pad 最后一帧
+                    #     if act.shape[1] < latent_frames:
+                    #         pad = act[:, -1:, :].repeat(1, latent_frames - act.shape[1], 1)
+                    #         act = torch.cat([act, pad], dim=1)
+
+                    #     # [B, F, A] -> [B, A, F, 1, 1]
+                    #     act = rearrange(act, "b f a -> b a f 1 1")
+
+                    #     # 多视角复制: [B, A, F, 1, 1] -> [B*V, A, F, H, W]
+                    #     act = act.repeat_interleave(n_view, dim=0)
+                    #     act = act.expand(-1, -1, latent_frames, latent_height, latent_width)
+
+                    #     latents = torch.cat([latents, act], dim=1)  # [B*V, 128+8, F, H, W]
+                    # ####################################################################################################
                     video_attention_mask = None
                     latents = rearrange(latents, 'bv c f h w -> bv (f h w) c')
 

@@ -216,13 +216,19 @@ class Inferencer:
         if self.args.return_video:
             n_chunk_action = 1
 
-        need_len = (
-            self.args.data["train"]["n_previous"]
-            + max(
-                self.args.data["train"]["chunk"],
-                self.args.data["train"]["action_chunk"] if self.args.return_action else self.args.data["train"]["chunk"]
+        if self.args.return_action:
+            need_len = (
+                self.args.data["train"]["n_previous"]
+                + max(
+                    self.args.data["train"]["chunk"],
+                    n_chunk_action * self.args.data["train"]["action_chunk"]
+                )
             )
-        )
+        else:
+            need_len = (
+                self.args.data["train"]["n_previous"]
+                + self.args.data["train"]["chunk"]
+            )
         ####
         
         dataset_root = os.path.join(
@@ -358,40 +364,69 @@ class Inferencer:
                         .tolist()
                     )
 
-            if self.args.return_action:
-                x_axis = np.arange(gt_actions_arr_all.shape[0])
-                num_dims = gt_actions_arr_all.shape[-1]
-                for dim_idx in range(num_dims):
+            # if self.args.return_action:
+            #     x_axis = np.arange(gt_actions_arr_all.shape[0])
+            #     num_dims = gt_actions_arr_all.shape[-1]
+            #     for dim_idx in range(num_dims):
                     
+            #         ax = axes[dim_idx]
+
+            #         # Plot the continuous action sequences
+            #         ax.plot(x_axis, gt_actions_arr_all[:, dim_idx], label='Ground Truth', color='cornflowerblue', alpha=0.9)
+            #         ax.plot(x_axis, pd_actions_arr_all[:, dim_idx], label='Inferred', color='tomato', linestyle='--', alpha=0.9)
+
+            #         # Mark the starting point of each inference sequence
+            #         start_indices = np.arange(0, gt_actions_arr_all.shape[0], self.args.data["train"]["action_chunk"])
+
+            #         ax.scatter(start_indices, gt_actions_arr_all[start_indices, dim_idx], c='blue', marker='o', s=40, zorder=5, label='GT Start')
+
+            #         ax.scatter(start_indices, pd_actions_arr_all[start_indices, dim_idx], c='darkred', marker='x', s=40, zorder=5, label='Inferred Start')
+
+            #         # ax.set_title(f'Action Dimension {dim_idx}')
+            #         ax.set_title(f"Dimension- {dim_idx}")
+
+            #     ax.set_ylabel('Value')
+            #     ax.grid(True, linestyle=':', alpha=0.6)
+            #     ax.legend()
+
+            #     # Set common X-axis label
+            #     fig.supxlabel(f'Continuous Timestep (across {n_chunk_action} inferences)')
+                
+            #     plt.tight_layout(rect=[0, 0, 1, 0.98]) # Adjust layout to make space for suptitle
+            #     fig.suptitle(f'Comparison of Ground Truth and Inferred Actions', fontsize=18)
+                
+            #     plt.savefig(f'{self.save_folder}/openloop_evaluation_val{i_validation}.png', dpi=300, bbox_inches='tight')
+            #     plt.clf()
+            if self.args.return_action:
+                min_len = min(gt_actions_arr_all.shape[0], pd_actions_arr_all.shape[0])
+                gt_actions_arr_all = gt_actions_arr_all[:min_len]
+                pd_actions_arr_all = pd_actions_arr_all[:min_len]
+
+                x_axis = np.arange(min_len)
+                num_dims = gt_actions_arr_all.shape[-1]
+
+                for dim_idx in range(num_dims):
                     ax = axes[dim_idx]
 
-                    # Plot the continuous action sequences
                     ax.plot(x_axis, gt_actions_arr_all[:, dim_idx], label='Ground Truth', color='cornflowerblue', alpha=0.9)
                     ax.plot(x_axis, pd_actions_arr_all[:, dim_idx], label='Inferred', color='tomato', linestyle='--', alpha=0.9)
 
-                    # Mark the starting point of each inference sequence
-                    start_indices = np.arange(0, gt_actions_arr_all.shape[0], self.args.data["train"]["action_chunk"])
+                    start_indices = np.arange(0, min_len, self.args.data["train"]["action_chunk"])
 
                     ax.scatter(start_indices, gt_actions_arr_all[start_indices, dim_idx], c='blue', marker='o', s=40, zorder=5, label='GT Start')
-
                     ax.scatter(start_indices, pd_actions_arr_all[start_indices, dim_idx], c='darkred', marker='x', s=40, zorder=5, label='Inferred Start')
 
-                    # ax.set_title(f'Action Dimension {dim_idx}')
                     ax.set_title(f"Dimension- {dim_idx}")
+                    ax.set_ylabel('Value')
+                    ax.grid(True, linestyle=':', alpha=0.6)
+                    ax.legend()
 
-                ax.set_ylabel('Value')
-                ax.grid(True, linestyle=':', alpha=0.6)
-                ax.legend()
-
-                # Set common X-axis label
                 fig.supxlabel(f'Continuous Timestep (across {n_chunk_action} inferences)')
-                
-                plt.tight_layout(rect=[0, 0, 1, 0.98]) # Adjust layout to make space for suptitle
-                fig.suptitle(f'Comparison of Ground Truth and Inferred Actions', fontsize=18)
-                
+                plt.tight_layout(rect=[0, 0, 1, 0.98])
+                fig.suptitle('Comparison of Ground Truth and Inferred Actions', fontsize=18)
+
                 plt.savefig(f'{self.save_folder}/openloop_evaluation_val{i_validation}.png', dpi=300, bbox_inches='tight')
                 plt.clf()
-
 
     def infer(self, n_chunk_action=4, n_chunk_video=1, n_validation=10, global_step=0, domain_name="agibotworld"):
         model_save_dir = os.path.join(self.save_folder,f'Inference')

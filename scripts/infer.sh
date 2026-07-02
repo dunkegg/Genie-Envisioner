@@ -53,6 +53,6 @@ torchrun \
     --checkpoint_path $ckp_path \
     --output_path $output_path \
     --n_validation $n_validation \
-    --n_chunk_action 10 \
+    --n_chunk_action 1 \
     --domain_name $domain_name \
     
