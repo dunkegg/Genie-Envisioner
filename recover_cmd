@@ -1,0 +1,3 @@
+tmux new -s work
+tmux attach -t work
+

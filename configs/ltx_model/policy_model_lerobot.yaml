@@ -5,7 +5,7 @@ tracker_name: ltx_trainer
 
 logging_dir: logs
 output_dir: OUTPUTS/ltx/action_video
-pretrained_model_name_or_path: checkpoints/LTX-Video
+pretrained_model_name_or_path: /mnt/pfs/s7fsio/code/pyl/tau-0/Genie-Envisioner/model
 
 ###
 train_data_class_path: data/lerobot_like_dataset.py

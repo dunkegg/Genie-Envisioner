@@ -20,13 +20,8 @@ from tqdm import tqdm
 
 @dataclass
 class ConvertConfig:
-    input_glob: list[str] = field(
-        default_factory=lambda: [
-            "lerobot_data/RXR_raw/*.h5",
-            
-        ]
-    )
-    output_dir: str = "lerobot_data/R2R/"
+    input_glob: str = "dataset/*.h5"
+    output_dir: str = "lerobot_data/isaac_lerobot/"
     fps: int = 30
     chunk_size: int = 1000
     use_velocity_as_action: bool = True

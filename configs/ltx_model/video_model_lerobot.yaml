@@ -95,7 +95,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: checkpoints/LTX-Video/ltx-video-2b-v0.9.safetensors
+  model_path: /mnt/pfs/s7fsio/code/pyl/tau-0/Genie-Envisioner/ltx-video-2b-v0.9.safetensors
   config:
     activation_fn: gelu-approximate
     attention_bias: true

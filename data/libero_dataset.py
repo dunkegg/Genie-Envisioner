@@ -209,6 +209,9 @@ class CustomLeRobotDataset(Dataset):
 
         if dataset_info_cache_path is not None and not(os.path.exists(dataset_info_cache_path)):
             zero_rank_print(f"Save Cache Dataset Information to {dataset_info_cache_path}")
+            cache_dir = os.path.dirname(dataset_info_cache_path)
+            if cache_dir:
+                os.makedirs(cache_dir, exist_ok=True)
             with open(dataset_info_cache_path, "w") as f:
                 json.dump(self.dataset, f)
 
@@ -538,4 +541,3 @@ class CustomLeRobotDataset(Dataset):
             state=state,
         )
         return sample
-

@@ -30,8 +30,8 @@ def print_hdf5_keys(h5_path):
 # ⚙️ 配置
 # ==============================
 
-INPUT_GLOB = "data/h5_ed2/*.h5"   # 你的输入
-OUTPUT_DIR = "data/lerobot/move_to_object"  # 输出目录
+INPUT_GLOB = "dataset/*.h5"   # 你的输入
+OUTPUT_DIR = "lerobot_data/isaac_lerobot/"  # 输出目录
 FPS = 30
 CHUNK_SIZE = 1000  # 每多少个 episode 一个 chunk
 
@@ -383,7 +383,7 @@ def main():
 
             parquet_path = os.path.join(
                 parquet_dir,
-                f"episode_{ep_idx:06d}.parquet"instruction
+                f"episode_{ep_idx:06d}.parquet"
             )
             df.to_parquet(parquet_path)
 

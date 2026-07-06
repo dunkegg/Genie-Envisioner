@@ -129,7 +129,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_root', default="PATH/TO/YOUR/DATASET")
     parser.add_argument('--data_name', default="YOUR_CUSTOM_DATASET")
     parser.add_argument('--data_type', default="joints")
-    parser.add_argument('--action_key', default="action")
+    parser.add_argument('--action_key', default="actions")
     parser.add_argument('--state_key', default="observation.state")
     parser.add_argument('--save_path', default="PATH/OF/JSON/FILE")
 
