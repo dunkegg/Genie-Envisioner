@@ -1,19 +1,17 @@
-model_name: 'ltx_train'
+model_name: 'ltx_bev_train'
 is_i2v: True
 report_to: None
-tracker_name: ltx_trainer
+tracker_name: ltx_bev_trainer
 
 logging_dir: logs
-output_dir: OUTPUTS/ltx/ltx
-pretrained_model_name_or_path: checkpoints/LTX-Video
+output_dir: OUTPUTS/ltx/bev_map
+pretrained_model_name_or_path: /mnt/pfs/s7fsio/code/pyl/tau-0/Genie-Envisioner/model
 
-###
 train_data_class_path: data/lerobot_like_dataset.py
 train_data_class: CustomLeRobotDataset
 val_data_class_path: data/lerobot_like_dataset.py
 val_data_class: CustomLeRobotDataset
 
-### 
 tokenizer_class_path: transformers
 tokenizer_class: T5Tokenizer
 textenc_class_path: transformers
@@ -28,35 +26,27 @@ diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
 pipeline_class_path: models/pipeline/custom_pipeline.py
 pipeline_class: CustomPipeline
 
-# 
 return_action: false
-return_video: true
-train_mode: 'video_only'
-action_loss_scale: 1.0
+return_video: false
+return_bev: true
+train_mode: 'bev_only'
+bev_loss_scale: 1.0
 
-# total training step is decided by the minimum of the below two
-train_steps: 300000
+train_steps: 100000
 train_epochs: 10000
-steps_to_save: 30000
+steps_to_save: 10000
 steps_to_log: 20
 steps_to_val: 2000
 
 mixed_precision: bf16
 allow_tf32: False
-
-# timeout, seconds
 nccl_timeout: 600
 seed: 42
 
-# vae
 enable_slicing: True
 enable_tiling: True
-
-add_state: False ### whether add state to the action chunk
-
 caption_dropout_p: 0.06
 
-# dataloader
 batch_size: 4
 dataloader_num_workers: 8
 pin_memory: True
@@ -64,7 +54,6 @@ pin_memory: True
 gradient_checkpointing: True
 noise_to_first_frame: 0.1
 
-# Optimizer Config
 optimizer: adamw
 lr: 3e-5
 beta1: 0.9
@@ -79,14 +68,11 @@ scale_lr: False
 max_grad_norm: 1.0
 gradient_accumulation_steps: 1
 
-# lr_scheduler Config
 lr_scheduler: constant_with_warmup
 lr_warmup_steps: 1000
 lr_num_cycles: 1
 lr_power: 1.0
 
-
-# Timestep Config
 flow_weighting_scheme: none
 flow_logit_mean: 0.0
 flow_logit_std: 1.0
@@ -113,25 +99,28 @@ diffusion_model:
     patch_size_t: 1
     qk_norm: rms_norm_across_heads
     action_expert: false
-    action_in_channels: 2
-    action_num_attention_heads: 16
-    action_attention_head_dim: 32
+    bev_expert: true
+    bev_in_channels: 1
+    bev_out_channels: 1
+    bev_patch_size: 4
+    bev_num_attention_heads: 16
+    bev_attention_head_dim: 32
+    bev_base_seq_length: 1024
 
 data:
-### more details can be found in data/utils/*_dataset.py
   train:
     data_roots: ["lerobot_data"]
     domains: ["isaac_lerobot", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
-    # valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
-    state_key:    "observation.state" 
-    chunk: 18
-    action_chunk: 108
-    n_previous: 8
+    state_key:    "observation.state"
+    bev_map_key:  "bev_map"
+    chunk: 9
+    action_chunk: 54
+    n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train"
@@ -144,13 +133,13 @@ data:
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
-    # valid_cam :  ['observation.images.top_head', 'observation.images.hand_left', 'observation.images.hand_right']
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
-    state_key:    "observation.state" 
-    chunk: 18
-    action_chunk: 108
-    n_previous: 8
+    state_key:    "observation.state"
+    bev_map_key:  "bev_map"
+    chunk: 9
+    action_chunk: 54
+    n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val"
@@ -158,23 +147,18 @@ data:
     action_space: "joint"
     stat_file: "lerobot_data/isaac_lerobot/statistics.json"
 
-
 use_color_jitter: true
 num_inference_step: 5
 noisy_video: true
-
-# false for quick debug, for training set True
 load_weights: true
 
-# deepspeed config
 use_deepspeed: true
 deepspeed:
   zero_optimization:
     stage: 2
-    # offload_optimizer:
-    #   device: cpu
   fp16:
     enabled: false
   bf16:
     enabled: true
   gradient_clipping: 1.0
+

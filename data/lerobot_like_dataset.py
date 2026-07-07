@@ -64,6 +64,7 @@ class CustomLeRobotDataset(Dataset):
         train_dataset=True,
         action_key = "action",
         state_key = "observation.state",
+        bev_map_key = None,
         use_unified_prompt = False,
         unified_prompt = "best quality, consistent and smooth motion, realistic, clear and distinct.",
         fix_epiidx = None,
@@ -120,6 +121,7 @@ class CustomLeRobotDataset(Dataset):
 
         self.action_key = action_key
         self.state_key = state_key
+        self.bev_map_key = bev_map_key
 
         self.random_crop = random_crop
         
@@ -260,6 +262,21 @@ class CustomLeRobotDataset(Dataset):
                 self.StatisticInfo = json.load(f)
 
         self.ignore_seek = ignore_seek
+
+    def get_bev_map(self, data, indexes):
+        if self.bev_map_key is None:
+            return None
+        if self.bev_map_key not in data:
+            raise KeyError(f"BEV map key '{self.bev_map_key}' not found in parquet data.")
+
+        bev_data = data[self.bev_map_key]
+        map_index = min(int(indexes[-1]), len(bev_data) - 1)
+        bev_map = bev_data.iloc[map_index] if hasattr(bev_data, "iloc") else bev_data[map_index]
+
+        if isinstance(bev_map, str):
+            bev_map = np.load(bev_map)
+        bev_map = np.asarray(bev_map, dtype=np.float32)
+        return torch.FloatTensor(bev_map)
 
     def get_frame_indexes(self, total_frames, ):
         """
@@ -494,7 +511,9 @@ class CustomLeRobotDataset(Dataset):
         )
         videos = self.normalize_video(videos, specific_transforms_norm)
 
-        return videos, action, caption, state
+        bev_map = self.get_bev_map(data, indexes)
+
+        return videos, action, caption, state, bev_map
 
 
     def __len__(self):
@@ -506,11 +525,11 @@ class CustomLeRobotDataset(Dataset):
         # video, actions, caption, state = self.get_batch(idx)
 
         if self.fix_epiidx is not None:
-            video, actions, caption, state = self.get_batch(self.fix_epiidx)
+            video, actions, caption, state, bev_map = self.get_batch(self.fix_epiidx)
         else:
             while True:
                 try:
-                    video, actions, caption, state = self.get_batch(idx)
+                    video, actions, caption, state, bev_map = self.get_batch(idx)
                     break
                 except:
                     ### print error information to debug
@@ -524,4 +543,6 @@ class CustomLeRobotDataset(Dataset):
             caption=caption,
             state=state,
         )
+        if bev_map is not None:
+            sample[self.bev_map_key] = bev_map
         return sample

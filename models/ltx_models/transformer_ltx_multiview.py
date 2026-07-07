@@ -37,6 +37,7 @@ from models.ltx_models.ltx_attention_processor import Attention
 
 
 from models.action_patches.patches import preprocessing_action_states, add_action_expert
+from models.bev_patches.bev_diffusion import add_bev_expert, preprocessing_bev_states, unpatchify_bev_output
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -372,6 +373,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         use_view_embed: bool = True,
         max_view: int = 3,
         action_expert: bool = False,
+        bev_expert: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -445,6 +447,23 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                 **kwargs
             )
 
+        self.bev_expert = bev_expert
+        if self.bev_expert:
+            add_bev_expert(
+                self,
+                num_layers=num_layers,
+                inner_dim=inner_dim,
+                activation_fn=activation_fn,
+                norm_eps=norm_eps,
+                attention_bias=attention_bias,
+                norm_elementwise_affine=norm_elementwise_affine,
+                attention_out_bias=attention_out_bias,
+                qk_norm=qk_norm,
+                attention_class=Attention,
+                attention_processor=LTXVideoAttentionProcessor2_0(),
+                **kwargs
+            )
+
 
     def _set_gradient_checkpointing(self, module, value=False):
         if hasattr(module, "gradient_checkpointing"):
@@ -462,8 +481,11 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         return_dict: bool = True,
         action_states: torch.Tensor = None,
         action_timestep: torch.LongTensor = None,
+        bev_states: torch.Tensor = None,
+        bev_timestep: torch.LongTensor = None,
         return_video: bool = True,
         return_action: bool = False,
+        return_bev: bool = False,
         store_buffer=False,
         video_states_buffer=None,
         video_attention_mask: torch.Tensor = None,
@@ -524,6 +546,15 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                 action_timestep = torch.cat((torch.zeros_like(action_timestep[:,0:1]), action_timestep), dim=1)
             action_temb, action_embedded_timestep, action_rotary_emb, action_hidden_states = preprocessing_action_states(self, action_states, action_timestep)
 
+        if return_bev:
+            if video_states_buffer is None:
+                assert store_buffer or return_video
+            bev_temb, bev_embedded_timestep, bev_rotary_emb, bev_hidden_states, bev_height, bev_width = preprocessing_bev_states(
+                self,
+                bev_states,
+                bev_timestep,
+            )
+
         for block_idx, block in enumerate(self.transformer_blocks):
             
             if torch.is_grad_enabled() and self.gradient_checkpointing:
@@ -559,17 +590,28 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                     hidden_states = video_states_buffer[block_idx]
                 
 
-                if return_action:
+                if return_action or return_bev:
                     ### final_hidden_states:  video features, b (v t h w) c
-                    ### action_hidden_states: random actions, b v c
-                    ### 
                     final_hidden_states = rearrange(hidden_states, '(b v) l c -> b (v l) c', v=n_view)
+
+                if return_action:
+                    ### action_hidden_states: random actions, b v c
                     action_hidden_states = torch.utils.checkpoint.checkpoint(
                         create_custom_forward(self.action_blocks[block_idx]),
                         action_hidden_states,
                         final_hidden_states,
                         action_temb,
                         action_rotary_emb,
+                        None,
+                        **ckpt_kwargs,
+                    )
+                if return_bev:
+                    bev_hidden_states = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(self.bev_blocks[block_idx]),
+                        bev_hidden_states,
+                        final_hidden_states.detach(),
+                        bev_temb,
+                        bev_rotary_emb,
                         None,
                         **ckpt_kwargs,
                     )
@@ -591,17 +633,25 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                 else:
                     hidden_states = video_states_buffer[block_idx]
                 
-                if return_action:
+                if return_action or return_bev:
                     ### final_hidden_states:  video features, b (v t h w) c
-                    ### action_hidden_states: random actions, b v c
-                    ### 
                     final_hidden_states = rearrange(hidden_states, '(b v) l c -> b (v l) c', v=n_view)
-                    
+
+                if return_action:
+                    ### action_hidden_states: random actions, b v c
                     action_hidden_states = self.action_blocks[block_idx](
                         hidden_states=action_hidden_states,
                         encoder_hidden_states=final_hidden_states,
                         temb=action_temb,
                         rotary_emb=action_rotary_emb,
+                    )
+
+                if return_bev:
+                    bev_hidden_states = self.bev_blocks[block_idx](
+                        hidden_states=bev_hidden_states,
+                        encoder_hidden_states=final_hidden_states.detach(),
+                        temb=bev_temb,
+                        rotary_emb=bev_rotary_emb,
                     )
 
                     
@@ -638,6 +688,18 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
 
             final_output['action'] = action_output
 
+        if return_bev:
+            if self.bev_final_embeddings:
+                bev_scale_shift_values = self.bev_scale_shift_table[None, None] + bev_embedded_timestep[:, :, None]
+                bev_shift, bev_scale = bev_scale_shift_values[:, :, 0], bev_scale_shift_values[:, :, 1]
+                bev_hidden_states = self.bev_norm_out(bev_hidden_states)
+                bev_hidden_states = bev_hidden_states * (1 + bev_scale) + bev_shift
+            else:
+                bev_hidden_states = self.bev_norm_out(bev_hidden_states)
+                bev_hidden_states = self.bev_proj_extra(bev_hidden_states)
+
+            final_output['bev'] = unpatchify_bev_output(self, bev_hidden_states, bev_height, bev_width)
+
         if not return_dict:
             return (final_output,)
 
@@ -656,4 +718,3 @@ def apply_rotary_emb(x, freqs):
     x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(2)
     out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
     return out
-

@@ -397,7 +397,14 @@ class Trainer:
             )
 
         diffusion_model_trainable_params = []
-        if train_mode == 'action_only':
+        if train_mode == 'bev_only':
+            for name, param in self.diffusion_model.named_parameters():
+                if 'bev_' in name:
+                    param.requires_grad = True
+                    diffusion_model_trainable_params.append(param)
+                else:
+                    param.requires_grad = False
+        elif train_mode == 'action_only':
             for name, param in self.diffusion_model.named_parameters():
                 if 'action_' in name:
                     param.requires_grad = True
@@ -406,7 +413,7 @@ class Trainer:
                     param.requires_grad = False
         elif train_mode == "video_only":
             for name, param in self.diffusion_model.named_parameters():
-                if 'action_' not in name:
+                if 'action_' not in name and 'bev_' not in name:
                     param.requires_grad = True
                     diffusion_model_trainable_params.append(param)
                 else:
@@ -605,7 +612,7 @@ class Trainer:
                     action_sigmas = scheduler_sigmas[action_indices]
                     action_timesteps = (action_sigmas * 1000.0).long()
 
-                    if self.args.return_action and self.args.noisy_video:
+                    if (self.args.return_action or getattr(self.args, "return_bev", False)) and self.args.noisy_video:
                         weights = torch.full_like(action_weights, 0.0).unsqueeze(1).repeat(1,n_view)
                     else:
                         weights = action_weights.unsqueeze(1).repeat(1,n_view)
@@ -646,6 +653,26 @@ class Trainer:
                         noisy_actions = None
                         act_state = None
 
+                    if getattr(self.args, "return_bev", False):
+                        bev_map_key = self.args.data['train'].get("bev_map_key", getattr(self.args, "bev_map_key", "bev_map"))
+                        bev_maps = batch[bev_map_key].to(accelerator.device, dtype=weight_dtype).contiguous()
+                        if bev_maps.ndim == 3:
+                            bev_maps = bev_maps.unsqueeze(1)
+
+                        noise_bev = randn_tensor(bev_maps.shape, device=accelerator.device, dtype=weight_dtype)
+                        bev_ss = action_sigmas.reshape(-1, 1, 1, 1).repeat(1, 1, bev_maps.shape[-2], bev_maps.shape[-1])
+                        noisy_bev = (1.0 - bev_ss) * bev_maps + bev_ss * noise_bev
+                        bev_timesteps = (action_sigmas * 1000.0).long()
+                        bev_weights = compute_loss_weighting_for_sd3(
+                            weighting_scheme=self.args.flow_weighting_scheme, sigmas=action_sigmas
+                        ).reshape(-1, 1, 1, 1).repeat(1, bev_maps.shape[1], bev_maps.shape[-2], bev_maps.shape[-1])
+                    else:
+                        bev_maps = None
+                        noise_bev = None
+                        noisy_bev = None
+                        bev_timesteps = None
+                        bev_weights = None
+
                     # shape:  bv, l, c and bv, l
                     noise, conditioning_mask, cond_indicator = gen_noise_from_condition_frame_latent(
                         mem_latents, latent_frames, latent_height, latent_width, noise_to_condition_frames=self.args.noise_to_first_frame
@@ -659,7 +686,7 @@ class Trainer:
 
                     # shape: bv,1,c
                     ss = sigmas.reshape(-1, 1, 1).repeat(1, 1, latents.size(-1))
-                    if self.args.return_action and self.args.noisy_video:
+                    if (self.args.return_action or getattr(self.args, "return_bev", False)) and self.args.noisy_video:
                         ss = torch.full_like(ss, 1.0)
 
                     noisy_latents = (1.0 - ss) * latents + ss * noise
@@ -681,14 +708,17 @@ class Trainer:
                         n_view=n_view,
                         action_states=noisy_actions,
                         action_timestep=action_timesteps,
-                        return_video=self.args.return_video or self.args.return_action,
+                        bev_states=noisy_bev,
+                        bev_timestep=bev_timesteps,
+                        return_video=self.args.return_video or self.args.return_action or getattr(self.args, "return_bev", False),
                         return_action=self.args.return_action,
+                        return_bev=getattr(self.args, "return_bev", False),
                         video_attention_mask=video_attention_mask,
                         history_action_state=act_state,
                         condition_mask=conditioning_mask,
                     )['latents']
 
-                    if self.args.train_mode == 'all' or self.args.train_mode == 'video_only':
+                    if self.args.return_video and (self.args.train_mode == 'all' or self.args.train_mode == 'video_only'):
                         pred = pred_all['video']
                         target = noise - latents
                         loss_video = weights.float() * (pred.float() - target.float()).pow(2)
@@ -700,7 +730,7 @@ class Trainer:
                     else:
                         loss_video = 0.
 
-                    if self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full':
+                    if self.args.return_action and (self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full'):
                         target_action = noise_actions - actions
                         loss_action = action_weights.float() * (pred_all['action'].float() - target_action.float()).pow(2)    # shape b,l,c
                         loss_action = loss_action.mean()
@@ -708,7 +738,15 @@ class Trainer:
                         loss_action = 0.
                     action_loss_scale = getattr(self.args, "action_loss_scale", 1.0)
 
-                    loss = loss_video + action_loss_scale * loss_action
+                    if getattr(self.args, "return_bev", False) and (self.args.train_mode == 'all' or self.args.train_mode == 'bev_only'):
+                        target_bev = noise_bev - bev_maps
+                        loss_bev = bev_weights.float() * (pred_all['bev'].float() - target_bev.float()).pow(2)
+                        loss_bev = loss_bev.mean()
+                    else:
+                        loss_bev = 0.
+                    bev_loss_scale = getattr(self.args, "bev_loss_scale", 1.0)
+
+                    loss = loss_video + action_loss_scale * loss_action + bev_loss_scale * loss_bev
 
                     assert torch.isnan(loss) == False, "NaN loss detected"
                     accelerator.backward(loss)
@@ -721,9 +759,11 @@ class Trainer:
                 
 
                 loss = accelerator.reduce(loss.detach(), reduction='mean')
-                if self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full':
+                if self.args.return_action and (self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full'):
                     loss_action = accelerator.reduce(loss_action.detach(), reduction='mean')
-                if self.args.train_mode == 'all' or self.args.train_mode == 'video_only':
+                if getattr(self.args, "return_bev", False) and (self.args.train_mode == 'all' or self.args.train_mode == 'bev_only'):
+                    loss_bev = accelerator.reduce(loss_bev.detach(), reduction='mean')
+                if self.args.return_video and (self.args.train_mode == 'all' or self.args.train_mode == 'video_only'):
                     loss_video = accelerator.reduce(loss_video.detach(), reduction='mean')
 
                 running_loss += loss.item()
@@ -745,9 +785,11 @@ class Trainer:
                     if accelerator.is_main_process:
                         if self.writer is not None:
                             self.writer.add_scalar("Training Loss", loss.item(), global_step)
-                            if self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full':
+                            if self.args.return_action and (self.args.train_mode == 'all' or self.args.train_mode == 'action_only' or self.args.train_mode == 'action_full'):
                                 self.writer.add_scalar("Action loss", loss_action.mean().item(), global_step)
-                            if self.args.train_mode == 'all' or self.args.train_mode == 'video_only':
+                            if getattr(self.args, "return_bev", False) and (self.args.train_mode == 'all' or self.args.train_mode == 'bev_only'):
+                                self.writer.add_scalar("BEV loss", loss_bev.mean().item(), global_step)
+                            if self.args.return_video and (self.args.train_mode == 'all' or self.args.train_mode == 'video_only'):
                                 self.writer.add_scalar("Video loss", loss_video.item(), global_step)
 
                 if global_step % self.args.steps_to_val == 0:
@@ -805,6 +847,10 @@ class Trainer:
     def validate(self, accelerator, model_save_dir, global_step, n_view=1, n_chunk=30, image=None, prompt=None, cap=None, path=None, gt_actions=None, to_log=True):
 
         os.makedirs(model_save_dir,exist_ok=True)
+
+        if getattr(self.args, "return_bev", False) and not self.args.return_video and not self.args.return_action:
+            logger.info("Skipping pipeline validation for BEV-only training.")
+            return
 
         pipe = self.pipeline_class(
             self.scheduler, self.vae, self.text_encoder, self.tokenizer,
@@ -882,4 +928,3 @@ class Trainer:
             if to_log:
                 for key, value in action_logs.items():
                     self.writer.add_scalar(key, value, global_step)
-
