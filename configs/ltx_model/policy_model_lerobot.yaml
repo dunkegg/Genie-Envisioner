@@ -30,8 +30,8 @@ pipeline_class: CustomPipeline
 
 # 
 return_action: true
-return_video: false
-train_mode: 'action_full'
+return_video: true
+train_mode: 'all'
 action_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
@@ -57,7 +57,7 @@ add_state: True ### whether add state to the action chunk
 caption_dropout_p: 0.06
 
 # dataloader
-batch_size: 4
+batch_size: 8
 dataloader_num_workers: 8
 pin_memory: True
 
@@ -95,7 +95,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: OUTPUTS/ltx/2026_06_15_13_45_31/step_80000/diffusion_pytorch_model.safetensors
+  model_path: OUTPUTS/ltx/2026_07_01_11_10_30/step_70000/diffusion_pytorch_model.safetensors
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -113,7 +113,7 @@ diffusion_model:
     patch_size_t: 1
     qk_norm: rms_norm_across_heads
     action_expert: true
-    action_in_channels: 8
+    action_in_channels: 2
     action_num_attention_heads: 16
     action_attention_head_dim: 32
 
@@ -121,7 +121,7 @@ data:
 ### more details can be found in data/utils/*_dataset.py
   train:
     data_roots: ["lerobot_data"]
-    domains: ["move_to_object", ]
+    domains: ["habitat_lerobot", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -129,18 +129,18 @@ data:
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
     state_key:    "observation.state" 
-    chunk: 9
-    action_chunk: 54
-    n_previous: 4
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: "lerobot_data/move_to_object/statistics.json"
+    stat_file: "lerobot_data/habitat_lerobot/statistics.json"
   val:
     data_roots: ["lerobot_data"]
-    domains: ["move_to_object", ]
+    domains: ["habitat_lerobot", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -148,15 +148,15 @@ data:
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
     state_key:    "observation.state" 
-    chunk: 9
-    action_chunk: 54
-    n_previous: 4
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: "lerobot_data/move_to_object/statistics.json"
+    stat_file: "lerobot_data/habitat_lerobot/statistics.json"
 
 
 use_color_jitter: true

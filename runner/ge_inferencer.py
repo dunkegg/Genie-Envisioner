@@ -259,11 +259,7 @@ class Inferencer:
                 pd_actions_arr_all = None
                 gt_actions_arr_all = None
 
-            if self.args.return_action:
-                ### openloop result visualization
-                fig, axes = plt.subplots(10, 2, figsize=(20, 28), sharex=True)
-                axes = axes.flatten()
-                total_steps = n_chunk_action * self.args.data["train"]["action_chunk"]
+
 
             for i_chunk_action in range(n_chunk_action):
 
@@ -398,6 +394,8 @@ class Inferencer:
             #     plt.savefig(f'{self.save_folder}/openloop_evaluation_val{i_validation}.png', dpi=300, bbox_inches='tight')
             #     plt.clf()
             if self.args.return_action:
+
+
                 min_len = min(gt_actions_arr_all.shape[0], pd_actions_arr_all.shape[0])
                 gt_actions_arr_all = gt_actions_arr_all[:min_len]
                 pd_actions_arr_all = pd_actions_arr_all[:min_len]
@@ -405,9 +403,21 @@ class Inferencer:
                 x_axis = np.arange(min_len)
                 num_dims = gt_actions_arr_all.shape[-1]
 
+                
+                ### openloop result visualization
+                ncols = 2
+                nrows = int(np.ceil(num_dims / ncols))
+                fig, axes = plt.subplots(nrows, ncols, figsize=(20, 4 * nrows), sharex=True)
+                # axes = axes.flatten()
+                axes = np.array(axes).reshape(-1)
+                total_steps = n_chunk_action * self.args.data["train"]["action_chunk"]
+
+
                 for dim_idx in range(num_dims):
                     ax = axes[dim_idx]
-
+                
+                    
+                    # ax.axis("off")
                     ax.plot(x_axis, gt_actions_arr_all[:, dim_idx], label='Ground Truth', color='cornflowerblue', alpha=0.9)
                     ax.plot(x_axis, pd_actions_arr_all[:, dim_idx], label='Inferred', color='tomato', linestyle='--', alpha=0.9)
 

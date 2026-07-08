@@ -27,7 +27,7 @@
 #     --config_file $config_path
 # fi
 #!/usr/bin/bash
-export MASTER_PORT=${MASTER_PORT:-29500}
+export MASTER_PORT=${MASTER_PORT:-29501}
 
 script_path=${1}
 echo $script_path

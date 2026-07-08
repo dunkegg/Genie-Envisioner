@@ -4,7 +4,7 @@ report_to: None
 tracker_name: ltx_trainer
 
 logging_dir: logs
-output_dir: OUTPUTS/ltx
+output_dir: OUTPUTS/ltx/ltx
 pretrained_model_name_or_path: checkpoints/LTX-Video
 
 ###
