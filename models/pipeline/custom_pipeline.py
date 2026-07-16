@@ -597,6 +597,7 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
         pixel_wise_timestep: bool = True,
         n_chunk: int = 1,
         show_progress: bool = False,
+        motion_deltas: Optional[torch.Tensor] = None, 
         **kwargs,
     ):
         r"""
@@ -897,6 +898,7 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
                         video_attention_mask=video_attention_mask,
                         history_action_state=history_action_state_in,
                         condition_mask=conditioning_mask,
+                        motion_deltas=motion_deltas,
                     )[0]
 
 

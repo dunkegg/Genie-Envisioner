@@ -441,18 +441,6 @@ class Trainer:
             use_torchao = self.args.optimizer_torchao,
         )
 
-        #debug
-        # for name, p in self.diffusion_model.named_parameters():
-        #     if "motion" in name:
-        #         print(name, p.requires_grad)
-        
-        # ids = set(id(p) for group in optimizer.param_groups
-        #             for p in group["params"])
-
-        # for name, p in self.diffusion_model.named_parameters():
-        #     if "motion" in name:
-        #         print(name, id(p) in ids)
-
         num_update_steps_per_epoch = math.ceil(len(self.train_dataloader) / self.args.gradient_accumulation_steps)
         if self.state.train_steps is None:
             self.state.train_steps = self.state.train_epochs * num_update_steps_per_epoch
@@ -547,13 +535,7 @@ class Trainer:
                         video = apply_color_jitter_to_video(video)
 
                     mem_size = self.args.data['train']['n_previous']
-                    
-                    # mem = video[:,:,:mem_size]
-                    use_traj = getattr(self.args, 'use_trajectory_condition', False)
-                    source = batch['video_with_traj'] if use_traj else batch['video']
-                    source = source.to(accelerator.device, dtype=weight_dtype).contiguous()
-                    source = rearrange(source, 'b c v t h w -> (b v) c t h w')
-                    mem = source[:, :, :mem_size]
+                    mem = video[:,:,:mem_size]
                     future_video = video[:,:,mem_size:]
 
                     if self.args.return_action:
@@ -603,23 +585,12 @@ class Trainer:
                     video_attention_mask = None
                     latents = rearrange(latents, 'bv c f h w -> bv (f h w) c')
 
-                    # captions = batch['caption']
-                    # text_conds = get_text_conditions(self.tokenizer,self.text_encoder,captions)
-                    # prompt_embeds = text_conds['prompt_embeds']
-                    # prompt_attention_mask = text_conds['prompt_attention_mask']
-                    # prompt_embeds = self.uncond_prompt_embeds.repeat(batch_size,1,1)*dropout_mask_prompt + \
-                    #                 prompt_embeds*~dropout_mask_prompt
                     captions = batch['caption']
-                    if getattr(self.args, 'use_text_condition', True):
-                        text_conds = get_text_conditions(self.tokenizer, self.text_encoder, captions)
-                        prompt_embeds = text_conds['prompt_embeds']
-                        prompt_attention_mask = text_conds['prompt_attention_mask']
-                        prompt_embeds = self.uncond_prompt_embeds.repeat(batch_size,1,1)*dropout_mask_prompt + \
-                                        prompt_embeds*~dropout_mask_prompt
-                    else:
-                        # 不使用语言指令，全部用空文本embedding
-                        prompt_embeds = self.uncond_prompt_embeds.repeat(batch_size, 1, 1)
-                        prompt_attention_mask = self.uncond_prompt_attention_mask.repeat(batch_size, 1)
+                    text_conds = get_text_conditions(self.tokenizer,self.text_encoder,captions)
+                    prompt_embeds = text_conds['prompt_embeds']
+                    prompt_attention_mask = text_conds['prompt_attention_mask']
+                    prompt_embeds = self.uncond_prompt_embeds.repeat(batch_size,1,1)*dropout_mask_prompt + \
+                                    prompt_embeds*~dropout_mask_prompt
 
                     # These weighting schemes use a uniform timestep sampling and instead post-weight the loss
                     action_weights = compute_density_for_timestep_sampling(
@@ -656,6 +627,13 @@ class Trainer:
                             
 
                         actions = batch['actions'][:, -self.args.data['train']['action_chunk']:].to(accelerator.device, dtype=weight_dtype).contiguous()   # shape b,t,c
+                        if getattr(self.args, 'use_motion_conditioning', False):
+                            # actions shape: [B, T, action_dim]
+                            actions_full = batch['actions'].to(accelerator.device, dtype=weight_dtype)
+                            # 计算delta: [B, T-1, action_dim]
+                            motion_deltas = actions_full[:, 1:] - actions_full[:, :-1]
+                        else:
+                            motion_deltas = None
                         action_dim = actions.shape[-1]
 
                         noise_actions = randn_tensor(actions.shape, device=accelerator.device, dtype=weight_dtype)
@@ -674,12 +652,6 @@ class Trainer:
                         action_timesteps = None
                         noisy_actions = None
                         act_state = None
-
-                    # 计算motion delta用于motion conditioning
-                    if getattr(self.args, 'use_motion_conditioning', False):
-                        actions_full = batch['actions'].to(accelerator.device, dtype=weight_dtype)
-                        motion_deltas = actions_full[:, 1:] - actions_full[:, :-1]  # [B, T-1, action_dim]
-                    else:
                         motion_deltas = None
 
                     # shape:  bv, l, c and bv, l
@@ -704,9 +676,6 @@ class Trainer:
                     weights = compute_loss_weighting_for_sd3(
                         weighting_scheme=self.args.flow_weighting_scheme, sigmas=sigmas
                     ).reshape(-1, 1, 1).repeat(1, 1, latents.size(-1))
-
-                    #debug
-                    # print(f"[trainer] motion_deltas: {motion_deltas is not None}, shape: {motion_deltas.shape if motion_deltas is not None else None}")
 
                     pred_all = forward_pass(
                         model=self.diffusion_model, 
@@ -752,22 +721,10 @@ class Trainer:
 
                     assert torch.isnan(loss) == False, "NaN loss detected"
                     accelerator.backward(loss)
-                    #debug
-                    # if self.diffusion_model.module.motion_mlp[0].weight.grad is None:
-                    #         print("motion_mlp grad = None")
-                    # else:
-                    #     print(
-                    #         "motion grad:",
-                    #         self.diffusion_model.module.motion_mlp[0].weight.grad.abs().mean().item()
-                    #     )
                     if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
                         grad_norm = accelerator.clip_grad_norm_(self.diffusion_model.parameters(), self.args.max_grad_norm)
                         logs["grad_norm"] = grad_norm
-                    #debug
-                    # w_before = self.diffusion_model.module.motion_mlp[0].weight[0,0].item()
                     self.optimizer.step()
-                    # w_after = self.diffusion_model.module.motion_mlp[0].weight[0,0].item()
-                    # print("delta =", w_after - w_before)
                     self.lr_scheduler.step()
                     self.optimizer.zero_grad()
                 
@@ -859,9 +816,12 @@ class Trainer:
         os.makedirs(model_save_dir,exist_ok=True)
 
         pipe = self.pipeline_class(
-            self.scheduler, self.vae, self.text_encoder, self.tokenizer,
-            unwrap_model(accelerator, self.diffusion_model) if accelerator is not None else self.diffusion_model
-        )
+            scheduler=self.scheduler,
+            vae=self.vae,
+            text_encoder=self.text_encoder,
+            tokenizer=self.tokenizer,
+            transformer=unwrap_model(accelerator, self.diffusion_model) if accelerator is not None else self.diffusion_model
+        )   
 
         batch = next(iter(self.val_dataloader))
         image = batch['video'][:,:,:,:self.args.data['train']['n_previous']].clone()  # shape b,c,v,t,h,w 
@@ -885,19 +845,10 @@ class Trainer:
         else:
             history_action_state = None
 
-        if getattr(self.args, 'use_motion_conditioning', False):
-            val_actions = batch['actions'].to(
-                accelerator.device if accelerator is not None else 'cuda',
-                dtype=self.state.weight_dtype
-            )
-            motion_deltas = val_actions[:, 1:] - val_actions[:, :-1]  # [B, T-1, action_dim]
-            motion_deltas = motion_deltas[:batch_size]
-        else:
-            motion_deltas = None
-
-        preds = pipe.infer(
-            image=image,
-            prompt=prompt[:batch_size] if getattr(self.args, 'use_text_condition', True) else ['' for _ in range(batch_size)],
+        preds_output = pipe.infer(
+            # image=image,
+            video=image.permute(0, 2, 1, 3, 4),  # (b*v, c, t, h, w) -> (b*v, t, c, h, w)
+            prompt=prompt[:batch_size],
             negative_prompt=negative_prompt,
             num_inference_steps=num_denois_steps,
             decode_timestep=0.03,
@@ -916,16 +867,28 @@ class Trainer:
             pixel_wise_timestep = self.args.pixel_wise_timestep,
             n_chunk=n_chunk,
             action_dim=self.args.diffusion_model["config"]["action_in_channels"] if self.args.return_action else None,
-            motion_deltas=motion_deltas,
-        )[0]
+            output_type="pt",
+            postprocess_video=False,
+        )
 
         cap = 'Validation'
         fps = int(getattr(self.args, "basic_fps", 30) / (self.args.data['train']['action_chunk'] // self.args.data['train']['chunk']))
         save_video(rearrange(gt_video[0].data.cpu(), 'c v t h w -> c t h (v w)', v=n_view), os.path.join(model_save_dir, f'{cap}_gt.mp4'), fps=fps)
-
+        
         if self.args.return_video:
-            video = preds['video'].data.cpu()
-            save_video(rearrange(video, '(b v) c t h w -> b c t h (v w)', v=n_view)[0], os.path.join(model_save_dir, f'{cap}.mp4'), fps=fps)
+            video = preds_output.frames
+            while isinstance(video, list):
+                video = video[0]
+            # 现在video是tensor，shape可能是(b*v, c, t, h, w)或(c, t, h, w)
+            if isinstance(video, torch.Tensor):
+                if video.ndim == 4:  # 如果少了batch维
+                    video = video.unsqueeze(0)
+                video = video.data.cpu()
+                print(f"video range: min={video.min():.4f}, max={video.max():.4f}, mean={video.mean():.4f}, shape={video.shape}")
+            save_video(
+                rearrange(video, '(b v) c t h w -> b c t h (v w)', v=n_view)[0],
+                os.path.join(model_save_dir, f'{cap}.mp4'), fps=fps
+            )
 
         if to_log:
             self.writer.add_text(f'step_{global_step}/{cap} prompt:', prompt[0], global_step)

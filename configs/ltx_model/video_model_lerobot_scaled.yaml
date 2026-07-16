@@ -1,11 +1,11 @@
-model_name: 'cosmos_train'
+model_name: 'ltx_train'
 is_i2v: True
 report_to: None
-tracker_name: cosmos_trainer
+tracker_name: ltx_trainer
 
 logging_dir: logs
-output_dir: OUTPUTS/cosmos
-pretrained_model_name_or_path: checkpoints/Cosmos-Predict2-2B-Video2World
+output_dir: OUTPUTS/ltx
+pretrained_model_name_or_path: checkpoints/LTX-Video
 
 ###
 train_data_class_path: data/lerobot_like_dataset.py
@@ -13,40 +13,24 @@ train_data_class: CustomLeRobotDataset
 val_data_class_path: data/lerobot_like_dataset.py
 val_data_class: CustomLeRobotDataset
 
+###
+use_motion_conditioning: True
+use_text_condition: False
 
 ### 
 tokenizer_class_path: transformers
-tokenizer_class: T5TokenizerFast
+tokenizer_class: T5Tokenizer
 textenc_class_path: transformers
 textenc_class: T5EncoderModel
-
-vae_class_path: models/cosmos_models/models/autoencoders/autoencoder_kl_wan.py
-vae_class: AutoencoderKLWan
-
-diffusion_model_class_path: models/cosmos_models/models/transformers/transformer_cosmos_multiview.py
-diffusion_model_class: MultiViewCosmosTransformer3DModel
-
-diffusion_scheduler_class_path: models/pipeline/gesim_cosmos2_pipeline_utils/scheduling_flow_match_euler_discrete.py
-diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler 
+vae_class_path: models/ltx_models/autoencoder_kl_ltx.py
+vae_class: AutoencoderKLLTXVideo
+diffusion_model_class_path: models/ltx_models/transformer_ltx_multiview.py
+diffusion_model_class: LTXVideoTransformer3DModel
+diffusion_scheduler_class_path: diffusers
+diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
 
 pipeline_class_path: models/pipeline/custom_pipeline.py
 pipeline_class: CustomPipeline
-
-
-# ### 
-# tokenizer_class_path: transformers
-# tokenizer_class: T5Tokenizer
-# textenc_class_path: transformers
-# textenc_class: T5EncoderModel
-# vae_class_path: models/ltx_models/autoencoder_kl_ltx.py
-# vae_class: AutoencoderKLLTXVideo
-# diffusion_model_class_path: models/ltx_models/transformer_ltx_multiview.py
-# diffusion_model_class: LTXVideoTransformer3DModel
-# diffusion_scheduler_class_path: diffusers
-# diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
-
-# pipeline_class_path: models/pipeline/custom_pipeline.py
-# pipeline_class: CustomPipeline
 
 # 
 return_action: false
@@ -57,13 +41,12 @@ action_loss_scale: 1.0
 # total training step is decided by the minimum of the below two
 train_steps: 100000
 train_epochs: 10000
-steps_to_save: 10000
+steps_to_save: 20000
 steps_to_log: 20
 steps_to_val: 100
 
 mixed_precision: bf16
 allow_tf32: False
-use_motion_conditioning: False
 
 # timeout, seconds
 nccl_timeout: 600
@@ -78,7 +61,7 @@ add_state: False ### whether add state to the action chunk
 caption_dropout_p: 0.06
 
 # dataloader
-batch_size: 1
+batch_size: 4
 dataloader_num_workers: 8
 pin_memory: True
 
@@ -113,36 +96,34 @@ flow_logit_mean: 0.0
 flow_logit_std: 1.0
 flow_mode_scale: 1.29
 
-pixel_wise_timestep: False #todo
+pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: checkpoints/Cosmos-Predict2-2B-Video2World/transformer
-
+  model_path: checkpoints/LTX-Video/ltx-video-2b-v0.9.safetensors
+  # model_path: OUTPUTS/ltx/2026_07_03_18_02_07/step_106000/diffusion_pytorch_model.safetensors
   config:
-    # in_channels: 26  # 16 (vae) + 3 (traj) + 6 (raymap) + 1 (padding mask) #todo
-    in_channels: 17  # 16 (vae) + 1 (padding mask)
-    out_channels: 16
-    num_attention_heads: 16
-    attention_head_dim: 128
+    activation_fn: gelu-approximate
+    attention_bias: true
+    attention_head_dim: 64
+    attention_out_bias: true
+    caption_channels: 4096
+    cross_attention_dim: 2048
+    in_channels: 128
+    norm_elementwise_affine: false
+    norm_eps: 1.0e-6
+    num_attention_heads: 32
     num_layers: 28
-    mlp_ratio: 4.0
-    text_embed_dim: 1024
-    adaln_lora_dim: 256
-    max_size: [128, 240, 240]
-    patch_size: [1, 2, 2]
-    rope_scale: [1.0, 3.0, 3.0]
-    concat_padding_mask: true  # TODO: no idea how does this work
-    extra_pos_embed_type: null
-    use_view_embed: true
+    out_channels: 128
+    patch_size: 1
+    patch_size_t: 1
+    qk_norm: rms_norm_across_heads
     action_expert: false
     action_in_channels: 2
     action_num_attention_heads: 16
     action_attention_head_dim: 32
-    action_rope_dim: 32
-    use_motion_conditioning: False
-    action_dim: 14 
+    use_motion_conditioning: True
+    action_dim: 2
     motion_hidden_dim: 256
-
 
 data:
 ### more details can be found in data/utils/*_dataset.py
@@ -156,18 +137,17 @@ data:
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
     state_key:    "observation.state" 
-    chunk: 9
-    action_chunk: 54
-    n_previous: 4
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train"
     action_type: "absolute"
     action_space: "joint"
     stat_file: "lerobot_data/habitat_lerobot/statistics.json"
-
   val:
-    data_roots: ["lerobot_data"]
+    data_roots: ["habitat_lerobot_scaled"]
     domains: ["habitat_lerobot", ]
     sample_size: [192, 256]
     sample_n_frames: 900
@@ -176,19 +156,19 @@ data:
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
     state_key:    "observation.state" 
-    chunk: 9
-    action_chunk: 54
-    n_previous: 4
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: "lerobot_data/habitat_lerobot/statistics.json"
+    stat_file: "lerobot_data/habitat_lerobot_scaled/statistics.json"
 
 
 use_color_jitter: true
-num_inference_step: 35
+num_inference_step: 5
 noisy_video: true
 
 # false for quick debug, for training set True

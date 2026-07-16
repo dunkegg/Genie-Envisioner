@@ -182,3 +182,4 @@ OUTPUTS/
 test_result/
 pretrained_models/
 gesim_video_gen_examples/
+trajectory_debug_dir/

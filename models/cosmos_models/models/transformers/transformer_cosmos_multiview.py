@@ -553,7 +553,7 @@ class MultiViewCosmosTransformer3DModel(ModelMixin, ConfigMixin):
                     hidden_states = self._gradient_checkpointing_func(
                         block,
                         hidden_states,
-                        encoder_hidden_states,
+                        encoder_hidden_states_with_motion,
                         embedded_timestep,
                         temb,
                         image_rotary_emb,

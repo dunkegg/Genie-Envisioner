@@ -13,6 +13,10 @@ train_data_class: CustomLeRobotDataset
 val_data_class_path: data/lerobot_like_dataset.py
 val_data_class: CustomLeRobotDataset
 
+###
+use_motion_conditioning: False
+use_text_condition: False
+
 ### 
 tokenizer_class_path: transformers
 tokenizer_class: T5Tokenizer
@@ -39,7 +43,7 @@ train_steps: 100000
 train_epochs: 10000
 steps_to_save: 20000
 steps_to_log: 20
-steps_to_val: 2000
+steps_to_val: 100
 
 mixed_precision: bf16
 allow_tf32: False
@@ -96,6 +100,7 @@ pixel_wise_timestep: True
 
 diffusion_model:
   model_path: checkpoints/LTX-Video/ltx-video-2b-v0.9.safetensors
+  # model_path: OUTPUTS/ltx/2026_07_06_14_21_17/step_40000/diffusion_pytorch_model.safetensors
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -116,6 +121,9 @@ diffusion_model:
     action_in_channels: 2
     action_num_attention_heads: 16
     action_attention_head_dim: 32
+    use_motion_conditioning: False
+    action_dim: 2
+    motion_hidden_dim: 256
 
 data:
 ### more details can be found in data/utils/*_dataset.py
@@ -138,6 +146,8 @@ data:
     action_type: "absolute"
     action_space: "joint"
     stat_file: "lerobot_data/habitat_lerobot/statistics.json"
+    trajectory_debug_dir: "trajectory_debug_dir/ltx/traj_debug"
+    use_trajectory_condition: True
   val:
     data_roots: ["lerobot_data"]
     domains: ["habitat_lerobot", ]

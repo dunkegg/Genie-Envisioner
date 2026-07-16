@@ -302,6 +302,17 @@ class LTXVideoTransformerBlock(nn.Module):
         )
         hidden_states = hidden_states + attn_hidden_states * gate_msa
 
+        #debug
+        # print("=" * 80)
+        # print("encoder_hidden_states:", encoder_hidden_states.shape)
+
+        # if encoder_attention_mask is None:
+        #     print("encoder_attention_mask = None")
+        # else:
+        #     print("encoder_attention_mask:", encoder_attention_mask.shape)
+
+        # print("=" * 80)
+
         attn_hidden_states = self.attn2(
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
@@ -372,6 +383,9 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         use_view_embed: bool = True,
         max_view: int = 3,
         action_expert: bool = False,
+        use_motion_conditioning=True,
+        action_dim=2,
+        motion_hidden_dim=256,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -393,6 +407,16 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                                         )
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
+        # Motion Vector Conditioning Encoder
+        if use_motion_conditioning:
+            self.motion_mlp = nn.Sequential(
+                nn.Linear(action_dim, motion_hidden_dim),
+                nn.SiLU(),
+                nn.Linear(motion_hidden_dim, motion_hidden_dim),
+                nn.SiLU(),
+            )
+            # cross_attention_dim是text embedding的维度，motion token要对齐到这里
+            self.motion_proj = nn.Linear(motion_hidden_dim, cross_attention_dim)
 
         self.rope = LTXVideoRotaryPosEmbed(
             dim=inner_dim,
@@ -444,6 +468,9 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                 attention_processor=LTXVideoAttentionProcessor2_0(),
                 **kwargs
             )
+        # print("="*80)
+        # print(kwargs)
+        # print("="*80)
 
 
     def _set_gradient_checkpointing(self, module, value=False):
@@ -471,6 +498,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         num_frames: int = None,
         height: int = None,
         width: int = None,
+        motion_deltas: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
 
@@ -513,6 +541,63 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
 
             encoder_hidden_states = self.caption_projection(encoder_hidden_states)
             encoder_hidden_states = encoder_hidden_states.view(hidden_states.size(0) // n_view, -1, hidden_states.size(-1))
+            # 此时 encoder_hidden_states: [B, seq_len, inner_dim]
+
+            # Motion conditioning
+            if hasattr(self, "motion_mlp") and motion_deltas is not None:
+                # motion_deltas: [B, T-1, action_dim]
+                # encoder_hidden_states: [B, seq_len, inner_dim]
+                # 两者batch维度都是B，直接使用
+                # print(f"[transformer] motion_deltas shape: {motion_deltas.shape}")
+                # print(f"[transformer] encoder_hidden_states shape: {encoder_hidden_states.shape}")
+                
+                motion_tokens = self.motion_mlp(motion_deltas)        # [B, T-1, motion_hidden_dim]
+                motion_tokens = self.motion_proj(motion_tokens)        # [B, T-1, inner_dim]
+                #zzb
+                bsz = encoder_hidden_states.shape[0]
+                if motion_tokens.shape[0] != bsz:
+                    repeat_factor = bsz // motion_tokens.shape[0]
+                    if repeat_factor == 2:
+                        # 前半部分是无条件（uncond），动作特征必须强制清零！
+                        # 后半部分是有条件（cond），给真实的动作特征。
+                        uncond_motion = torch.zeros_like(motion_tokens)
+                        motion_tokens = torch.cat([uncond_motion, motion_tokens], dim=0)
+                    else:
+                        # 应对其他非标准情况
+                        motion_tokens = motion_tokens.repeat(repeat_factor, 1, 1)
+                #debug
+                # motion_tokens.retain_grad()
+                # self.saved_motion_tokens = motion_tokens
+                # print("motion_tokens.requires_grad =", motion_tokens.requires_grad)
+                # print("motion_tokens.grad_fn =", motion_tokens.grad_fn)
+                # print(f"[transformer] motion_tokens shape: {motion_tokens.shape}")
+                #concate顺序更改
+                encoder_hidden_states = torch.cat(
+                    [motion_tokens, encoder_hidden_states], dim=1
+                )  # [B, seq_len + T-1, inner_dim]
+
+                if encoder_attention_mask is not None:
+                    # encoder_attention_mask 当前已经是 attention bias
+                    # shape: [B, 1, 128]
+
+                    motion_mask = torch.zeros(
+                        encoder_attention_mask.shape[0],
+                        1,
+                        motion_tokens.shape[1],
+                        dtype=encoder_attention_mask.dtype,
+                        device=encoder_attention_mask.device,
+                    )
+
+                    encoder_attention_mask = torch.cat(
+                        [motion_mask, encoder_attention_mask],
+                        dim=-1,
+                    )
+                    # print(
+                    #     "[transformer] encoder_attention_mask after cat:",
+                    #     encoder_attention_mask.shape,
+                    # )
+        #debug
+        # print(motion_tokens.abs().mean())
 
         if return_action:
             ### when video_states_buffer is not None, action blocks will directly use the input buffers
@@ -589,8 +674,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                     if store_buffer:
                         video_states_buffer.append(hidden_states.clone())
                 else:
-                    hidden_states = video_states_buffer[block_idx]
-                
+                    hidden_states = video_states_buffer[block_idx]  
                 if return_action:
                     ### final_hidden_states:  video features, b (v t h w) c
                     ### action_hidden_states: random actions, b v c
@@ -603,8 +687,6 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                         temb=action_temb,
                         rotary_emb=action_rotary_emb,
                     )
-
-                    
 
 
         final_output = {}

@@ -400,6 +400,7 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
         merge_view_into_width: bool = False,
         postprocess_video: bool = True,
         show_progress: bool = False,
+        motion_deltas: Optional[torch.Tensor] = None,
         **kwargs,
     ):
         r"""
@@ -530,8 +531,16 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
 
         # 4. Prepare timesteps
         sigmas_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
-        sigmas = torch.linspace(0, 1, num_inference_steps, dtype=sigmas_dtype)
-        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, device=device, sigmas=sigmas)
+        # sigmas = torch.linspace(1, 0, num_inference_steps, dtype=sigmas_dtype)
+        # timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, device=device, sigmas=sigmas)
+        print(f"scheduler config sigma_max: {self.scheduler.config.sigma_max}")
+        print(f"scheduler config sigma_min: {self.scheduler.config.sigma_min}")
+        timesteps, num_inference_steps = retrieve_timesteps(
+            self.scheduler, 
+            num_inference_steps=num_inference_steps,
+            device=device
+        )
+        print(f"sigma sequence: {self.scheduler.sigmas[:10]}")
         if self.scheduler.config.final_sigmas_type == "sigma_min":
             # Replace the last sigma (which is zero) with the minimum sigma value
             self.scheduler.sigmas[-1] = self.scheduler.sigmas[-2]
@@ -582,6 +591,8 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
 
         if not show_progress:
             self.set_progress_bar_config(disable=True)
+        print(f"scheduler sigmas full: {self.scheduler.sigmas}")
+        print(f"scheduler sigmas range: min={self.scheduler.sigmas.min():.4f}, max={self.scheduler.sigmas.max():.4f}")
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -609,13 +620,13 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
 
                 n_fut = (num_frames - 1) // self.vae_scale_factor_temporal + 1
 
-                cond_to_concat = cond_to_concat.to(device=cond_latent.device, dtype=cond_latent.dtype)
-                cond_to_concat_resze = resize_traj_and_ray(cond_to_concat, 
-                    mem_size=n_prev, future_size=n_fut,
-                    height=cond_latent.shape[-2], width=cond_latent.shape[-1]
-                )
-
-                cond_latent = torch.cat([cond_latent, cond_to_concat_resze], dim=1)  # channel
+                if cond_to_concat is not None:
+                    cond_to_concat = cond_to_concat.to(device=cond_latent.device, dtype=cond_latent.dtype)
+                    cond_to_concat_resze = resize_traj_and_ray(cond_to_concat,
+                        mem_size=n_prev, future_size=n_fut,
+                        height=cond_latent.shape[-2], width=cond_latent.shape[-1]
+                    )
+                    cond_latent = torch.cat([cond_latent, cond_to_concat_resze], dim=1)  # channel
                 cond_latent = cond_latent.to(transformer_dtype)  # (b v) c t h w
                 cond_timestep = cond_indicator * t_conditioning + (1 - cond_indicator) * timestep
                 cond_timestep = cond_timestep.to(transformer_dtype)
@@ -636,16 +647,22 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
                     motion_deltas=motion_deltas,
                 )[0]['video']
 
+                if torch.isnan(noise_pred).any():
+                    print(f"NaN detected in transformer output at step {i}")
+
                 noise_pred = noise_pred[:, :, n_prev:]  # remove memory
                 noise_pred = (c_skip * latents + c_out * noise_pred.float()).to(transformer_dtype)
                 # noise_pred = cond_indicator * conditioning_latents + (1 - cond_indicator) * noise_pred
+                if torch.isnan(noise_pred).any():
+                    print(f"NaN detected after c_skip/c_out at step {i}, c_skip={c_skip}, c_out={c_out}, current_sigma={current_sigma}")
 
                 if self.do_classifier_free_guidance:
                     uncond_latent = latents * c_in
                     # replace :n_prev frames with clean video latents
                     # uncond_latent = uncond_indicator * unconditioning_latents + (1 - uncond_indicator) * uncond_latent
                     uncond_latent = torch.cat([conditioning_latents, uncond_latent], dim=2)  # frame
-                    uncond_latent = torch.cat([uncond_latent, cond_to_concat.to(device=cond_latent.device, dtype=cond_latent.dtype)], dim=1)  # channel
+                    if cond_to_concat is not None:
+                        uncond_latent = torch.cat([uncond_latent, cond_to_concat.to(device=cond_latent.device, dtype=cond_latent.dtype)], dim=1)  # channel
                     uncond_latent = uncond_latent.to(transformer_dtype)
                     uncond_timestep = uncond_indicator * t_conditioning + (1 - uncond_indicator) * timestep
                     uncond_timestep = uncond_timestep.to(transformer_dtype)
@@ -667,8 +684,20 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
                     # )
                     noise_pred = noise_pred + self.guidance_scale * (noise_pred - noise_pred_uncond)
 
-                noise_pred = (latents - noise_pred) / current_sigma
-                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+                # noise_pred = (latents - noise_pred) / current_sigma
+                if current_sigma > 1e-5:
+                    noise_pred = (latents - noise_pred) / current_sigma
+                    latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+                else:
+                    # 最后一步sigma≈0，直接用latents作为最终结果，跳过这步除法
+                    noise_pred = torch.zeros_like(latents)
+
+                if torch.isnan(noise_pred).any():
+                    print(f"NaN detected after /current_sigma at step {i}, current_sigma={current_sigma}")
+
+
+                if torch.isnan(latents).any():
+                    print(f"NaN detected in latents at step {i}")
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -700,9 +729,17 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
                 .view(1, self.vae.config.z_dim, 1, 1, 1)
                 .to(latents.device, latents.dtype)
             )
-            latents = latents * latents_std / self.scheduler.config.sigma_data + latents_mean  # config.sigma_data=1.0
+            print(f"latents before rescale: min={latents.min():.4f}, max={latents.max():.4f}")
+            latents = latents * latents_std / self.scheduler.config.sigma_data + latents_mean
+            print(f"latents after rescale: min={latents.min():.4f}, max={latents.max():.4f}")
+            print(f"latents_mean: {self.vae.config.latents_mean}")
+            print(f"latents_std: {self.vae.config.latents_std}")
+            print(f"sigma_data: {self.scheduler.config.sigma_data}")
+            print(f"latents after rescale: min={latents.min():.4f}, max={latents.max():.4f}")
 
+            print(f"latents before decode: min={latents.min():.4f}, max={latents.max():.4f}, has_nan={torch.isnan(latents).any()}")
             video = self.vae.decode(latents.to(self.vae.dtype), return_dict=False)[0]
+            print(f"video after decode: min={video.min():.4f}, max={video.max():.4f}, has_nan={torch.isnan(video).any()}")
             if merge_view_into_width:
                 video = rearrange(video, '(b v) c t h w -> b c t h (v w)', v=n_view)  # should be vw not wv !!!
 
@@ -778,7 +815,9 @@ class GeSimCosmos2Pipeline(DiffusionPipeline):
         else:
             latents = latents.to(device=device, dtype=dtype)
 
-        latents = latents * self.scheduler.config.sigma_max  # sigma_max = 80.0
+        # latents = latents * self.scheduler.config.sigma_max  # sigma_max = 80.0
+        latents = latents * self.scheduler.sigmas.max()  # 用实际sigma序列的最大值，约1.0
+        print(f"latents after sigma_max scaling: min={latents.min():.4f}, max={latents.max():.4f}, sigma_max={self.scheduler.config.sigma_max}")
 
         padding_shape = (batch_size, 1, num_cond_latent_frames+num_latent_frames, latent_height, latent_width)
         ones_padding = latents.new_ones(padding_shape)

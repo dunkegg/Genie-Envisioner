@@ -229,4 +229,19 @@ def forward_pass(
         return_dict=False,
         **kwargs,
     )[0]
+
+    out = model(
+        hidden_states=noisy_latents,
+        encoder_hidden_states=prompt_embeds,
+        timestep=timesteps,
+        encoder_attention_mask=prompt_attention_mask,
+        num_frames=num_frames,
+        height=height,
+        width=width,
+        n_view=n_view,
+        rope_interpolation_scale=rope_interpolation_scale,
+        return_dict=False,
+        **kwargs,
+    )[0]
+
     return {"latents": denoised_latents}
