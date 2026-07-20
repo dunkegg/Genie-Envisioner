@@ -538,7 +538,7 @@ class Trainer:
                     mem = video[:,:,:mem_size]
                     future_video = video[:,:,mem_size:]
 
-                    if self.args.return_action and not self.args.return_video:  #wzj
+                    if self.args.return_action and not self.args.return_video:  #wzj todo
                         future_video = future_video[:,:,:1].repeat(1,1,self.args.data['train']['chunk'],1,1)
                     
                     # get the shape params

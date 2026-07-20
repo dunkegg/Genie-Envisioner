@@ -35,9 +35,9 @@ train_mode: 'video_only'
 action_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
-train_steps: 100000
+train_steps: 300000
 train_epochs: 10000
-steps_to_save: 20000
+steps_to_save: 30000
 steps_to_log: 20
 steps_to_val: 2000
 
@@ -121,7 +121,7 @@ data:
 ### more details can be found in data/utils/*_dataset.py
   train:
     data_roots: ["lerobot_data"]
-    domains: ["habitat_lerobot", ]
+    domains: ["R2R", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -137,10 +137,10 @@ data:
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: "lerobot_data/habitat_lerobot/statistics.json"
+    stat_file: "lerobot_data/R2R/statistics.json"
   val:
     data_roots: ["lerobot_data"]
-    domains: ["habitat_lerobot", ]
+    domains: ["R2R", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -156,7 +156,7 @@ data:
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val"
     action_type: "absolute"
     action_space: "joint"
-    stat_file: "lerobot_data/habitat_lerobot/statistics.json"
+    stat_file: "lerobot_data/R2R/statistics.json"
 
 
 use_color_jitter: true
