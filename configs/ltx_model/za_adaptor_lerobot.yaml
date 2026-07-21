@@ -1,0 +1,170 @@
+model_name: 'ltx_za_adaptor_train'
+is_i2v: True
+report_to: None
+tracker_name: ltx_za_adaptor_trainer
+
+logging_dir: logs
+output_dir: OUTPUTS/ltx/za_adaptor
+pretrained_model_name_or_path: /mnt/pfs/s7fsio/code/pyl/tau-0/Genie-Envisioner/model
+
+train_data_class_path: data/lerobot_like_dataset.py
+train_data_class: CustomLeRobotDataset
+val_data_class_path: data/lerobot_like_dataset.py
+val_data_class: CustomLeRobotDataset
+
+tokenizer_class_path: transformers
+tokenizer_class: T5Tokenizer
+textenc_class_path: transformers
+textenc_class: T5EncoderModel
+vae_class_path: models/ltx_models/autoencoder_kl_ltx.py
+vae_class: AutoencoderKLLTXVideo
+diffusion_model_class_path: models/ltx_models/transformer_ltx_multiview.py
+diffusion_model_class: LTXVideoTransformer3DModel
+diffusion_scheduler_class_path: diffusers
+diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
+
+pipeline_class_path: models/pipeline/custom_pipeline.py
+pipeline_class: CustomPipeline
+
+return_action: false
+return_video: false
+return_bev: false
+train_mode: 'za_adaptor_only'
+
+train_steps: 100000
+train_epochs: 10000
+steps_to_save: 10000
+steps_to_log: 20
+steps_to_val: 2000
+
+mixed_precision: bf16
+allow_tf32: False
+nccl_timeout: 600
+seed: 42
+
+enable_slicing: True
+enable_tiling: True
+caption_dropout_p: 0.0
+
+batch_size: 4
+dataloader_num_workers: 8
+pin_memory: True
+
+gradient_checkpointing: False
+noise_to_first_frame: 0.1
+
+optimizer: adamw
+lr: 1e-4
+beta1: 0.9
+beta2: 0.95
+beta3: 0.999
+epsilon: 1e-8
+weight_decay: 1e-5
+optimizer_8bit: False
+optimizer_torchao: False
+scale_lr: False
+
+max_grad_norm: 1.0
+gradient_accumulation_steps: 1
+
+lr_scheduler: constant_with_warmup
+lr_warmup_steps: 1000
+lr_num_cycles: 1
+lr_power: 1.0
+
+flow_weighting_scheme: none
+flow_logit_mean: 0.0
+flow_logit_std: 1.0
+flow_mode_scale: 1.29
+
+pixel_wise_timestep: True
+
+za_adaptor:
+  input_dim: 2048
+  output_dim: 512
+  size: base
+  dropout: 0.0
+  pool: mean
+  target_pool: mean
+  timestep_mode: clean
+  checkpoint_path: null
+
+diffusion_model:
+  model_path: /mnt/pfs/s7fsio/code/pyl/tau-0/Genie-Envisioner/ltx-video-2b-v0.9.safetensors
+  config:
+    activation_fn: gelu-approximate
+    attention_bias: true
+    attention_head_dim: 64
+    attention_out_bias: true
+    caption_channels: 4096
+    cross_attention_dim: 2048
+    in_channels: 128
+    norm_elementwise_affine: false
+    norm_eps: 1.0e-6
+    num_attention_heads: 32
+    num_layers: 28
+    out_channels: 128
+    patch_size: 1
+    patch_size_t: 1
+    qk_norm: rms_norm_across_heads
+    action_expert: false
+    bev_expert: false
+
+data:
+  train:
+    data_roots: ["lerobot_data"]
+    domains: ["isaac_lerobot", ]
+    sample_size: [192, 256]
+    sample_n_frames: 900
+    preprocess :  'resize'
+    valid_cam :  ['observation.images.chest']
+    action_key:   "actions"
+    state_key:    "observation.state"
+    za_latent_key: "latent"
+    za_latent_index_mode: "last"
+    za_latent_tensor_key: null
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
+    previous_pick_mode: 'random'
+    random_crop: False
+    dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train_za"
+    action_type: "absolute"
+    action_space: "joint"
+    stat_file: "lerobot_data/isaac_lerobot/statistics.json"
+  val:
+    data_roots: ["lerobot_data"]
+    domains: ["isaac_lerobot", ]
+    sample_size: [192, 256]
+    sample_n_frames: 900
+    preprocess :  'resize'
+    valid_cam :  ['observation.images.chest']
+    action_key:   "actions"
+    state_key:    "observation.state"
+    za_latent_key: "latent"
+    za_latent_index_mode: "last"
+    za_latent_tensor_key: null
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
+    previous_pick_mode: 'random'
+    random_crop: False
+    dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val_za"
+    action_type: "absolute"
+    action_space: "joint"
+    stat_file: "lerobot_data/isaac_lerobot/statistics.json"
+
+use_color_jitter: false
+num_inference_step: 5
+noisy_video: false
+load_weights: true
+
+use_deepspeed: false
+deepspeed:
+  zero_optimization:
+    stage: 2
+  fp16:
+    enabled: false
+  bf16:
+    enabled: true
+  gradient_clipping: 1.0
