@@ -170,6 +170,14 @@ valid/*
 *.gif
 # *.png
 *.pyc
+!runner/_za_adaptor_trainer_recovered.cpython-310.pyc
+!runner/_za_adaptor_trainer_recovered.cpython-313.pyc
+!models/_beta_fusion_recovered.cpython-310.pyc
+!models/_latent_adaptor_recovered.cpython-310.pyc
+!models/_za_bev_dit_recovered.cpython-310.pyc
+!models/_za_bev_dit_recovered.cpython-313.pyc
+!models/_worldvln_video_backbone_recovered.cpython-310.pyc
+!models/_worldvln_video_backbone_recovered.cpython-313.pyc
 # custom_configs/
 logs/
 output/
