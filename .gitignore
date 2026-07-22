@@ -178,6 +178,22 @@ valid/*
 !models/_za_bev_dit_recovered.cpython-313.pyc
 !models/_worldvln_video_backbone_recovered.cpython-310.pyc
 !models/_worldvln_video_backbone_recovered.cpython-313.pyc
+!_h5_2_lerobot_3d_from_robot_velocity_recovered.cpython-310.pyc
+!_h5_tdmpc_2_lerobot_recovered.cpython-310.pyc
+!_h5_tdmpc_2_lerobot_recovered.cpython-313.pyc
+!_inspect_lerobot_parquet_recovered.cpython-310.pyc
+!_inspect_za_pt_metrics_recovered.cpython-310.pyc
+!_isaac_test_tdmpc2_external_z_recovered.cpython-310.pyc
+!_isaac_test_tdmpc2_external_z_recovered.cpython-313.pyc
+!_rewrite_tdmpc_episode_latents_recovered.cpython-313.pyc
+!_validate_repair_tdmpc_latents_recovered.cpython-310.pyc
+!_validate_repair_tdmpc_latents_recovered.cpython-313.pyc
+!web_infer_scripts/_main_za_adaptor_server_recovered.cpython-310.pyc
+!web_infer_scripts/_main_za_adaptor_server_recovered.cpython-313.pyc
+!web_infer_utils/_ZaAdaptorActor_recovered.cpython-310.pyc
+!web_infer_utils/_ZaAdaptorActor_recovered.cpython-313.pyc
+!web_infer_utils/_za_adaptor_server_recovered.cpython-310.pyc
+!web_infer_utils/_za_adaptor_server_recovered.cpython-313.pyc
 # custom_configs/
 logs/
 output/
