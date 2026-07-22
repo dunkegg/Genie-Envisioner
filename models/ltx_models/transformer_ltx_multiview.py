@@ -486,6 +486,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         return_video: bool = True,
         return_action: bool = False,
         return_bev: bool = False,
+        return_zb: bool = False,
         store_buffer=False,
         video_states_buffer=None,
         video_attention_mask: torch.Tensor = None,
@@ -496,7 +497,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         **kwargs,
     ) -> torch.Tensor:
 
-        if return_video or store_buffer:
+        if return_video or store_buffer or return_zb:
 
             if store_buffer:
                 video_states_buffer = []
@@ -570,7 +571,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
 
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                 
-                if return_video or store_buffer:
+                if return_video or store_buffer or return_zb:
                     hidden_states = torch.utils.checkpoint.checkpoint(
                         create_custom_forward(block),
                         hidden_states,
@@ -616,7 +617,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                         **ckpt_kwargs,
                     )
             else:
-                if return_video or store_buffer:
+                if return_video or store_buffer or return_zb:
                     hidden_states = block(
                         hidden_states=hidden_states,
                         encoder_hidden_states=encoder_hidden_states,
@@ -661,6 +662,9 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
 
         if store_buffer:
             final_output['video_states_buffer'] = video_states_buffer
+
+        if return_zb:
+            final_output['zb'] = rearrange(hidden_states, '(b v) l c -> b (v l) c', v=n_view)
 
         if return_video:
             scale_shift_values = self.scale_shift_table[None, None] + embedded_timestep[:, :, None]

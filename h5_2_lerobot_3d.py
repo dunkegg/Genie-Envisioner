@@ -126,28 +126,7 @@ def load_hdf5(path: str | Path) -> list[dict[str, Any]]:
         for traj_name in sorted(f.keys()):
             group = f[traj_name]
 
-            camera_pos = np.asarray(group["camera_pos"][:])
-
-            if camera_pos.ndim == 1:
-                if camera_pos.shape[0] != 8:
-                    raise ValueError(
-                        f"{path}/{traj_name}/camera_pos expected 8 values, "
-                        f"got shape={camera_pos.shape}"
-                    )
-                camera_pos = camera_pos.reshape(1, 8)
-
-            elif camera_pos.ndim == 2:
-                if camera_pos.shape[1] != 8:
-                    raise ValueError(
-                        f"{path}/{traj_name}/camera_pos expected shape (T, 8), "
-                        f"got {camera_pos.shape}"
-                    )
-
-            else:
-                raise ValueError(
-                    f"{path}/{traj_name}/camera_pos expected 1D or 2D, "
-                    f"got shape={camera_pos.shape}"
-                )
+            camera_pos = group["camera_pos"][:]
 
             data: dict[str, Any] = {
                 "torso_r": camera_pos[:, 0],
@@ -574,13 +553,7 @@ def init_output_dir(cfg: ConvertConfig) -> None:
 
 
 def convert_dataset(cfg: ConvertConfig) -> None:
-    # files = sorted(glob.glob(cfg.input_glob))
-
-    files = sorted(
-        file
-        for pattern in cfg.input_glob
-        for file in glob.glob(pattern)
-    )
+    files = sorted(glob.glob(cfg.input_glob))
     print(f"Found {len(files)} HDF5 files")
 
     if not files:
@@ -596,27 +569,23 @@ def convert_dataset(cfg: ConvertConfig) -> None:
     global_episode_index = 0
 
     for h5_file in files:
-        
-        try:
-            raw_episodes = load_hdf5(h5_file)
-            for raw in tqdm(raw_episodes, desc=f"Converting {Path(h5_file).name}"):
-                
-                ep = build_episode(
-                    raw=raw,
-                    episode_index=global_episode_index,
-                    task_registry=task_registry,
-                    cfg=cfg,
-                )
+        raw_episodes = load_hdf5(h5_file)
 
-                write_episode_parquet(ep, cfg)
-                write_episode_video(ep, raw, cfg)
+        for raw in tqdm(raw_episodes, desc=f"Converting {Path(h5_file).name}"):
+            ep = build_episode(
+                raw=raw,
+                episode_index=global_episode_index,
+                task_registry=task_registry,
+                cfg=cfg,
+            )
 
-                episodes.append(ep)
-                episode_stats.append(compute_episode_stats(ep, cfg))
+            write_episode_parquet(ep, cfg)
+            write_episode_video(ep, raw, cfg)
 
-                global_episode_index += 1
-        except:
-            continue
+            episodes.append(ep)
+            episode_stats.append(compute_episode_stats(ep, cfg))
+
+            global_episode_index += 1
         
 
     write_meta_files(

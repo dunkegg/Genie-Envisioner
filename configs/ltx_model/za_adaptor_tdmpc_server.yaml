@@ -1,0 +1,137 @@
+model_name: 'ltx_za_adaptor_tdmpc_server'
+is_i2v: True
+pretrained_model_name_or_path: model
+
+tokenizer_class_path: transformers
+tokenizer_class: T5Tokenizer
+textenc_class_path: transformers
+textenc_class: T5EncoderModel
+vae_class_path: models/ltx_models/autoencoder_kl_ltx.py
+vae_class: AutoencoderKLLTXVideo
+diffusion_model_class_path: models/ltx_models/transformer_ltx_multiview.py
+diffusion_model_class: LTXVideoTransformer3DModel
+diffusion_scheduler_class_path: diffusers
+diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
+
+pipeline_class_path: models/pipeline/custom_pipeline.py
+pipeline_class: CustomPipeline
+
+mixed_precision: bf16
+enable_slicing: True
+enable_tiling: True
+noise_to_first_frame: 0.1
+pixel_wise_timestep: True
+load_weights: true
+load_diffusion_model_weights: true
+
+server:
+  host: 0.0.0.0
+  port: 8001
+  # Recompute WorldVLN from the latest 8-frame window on every request.
+  reuse_visual_zb_for_buffered_actions: false
+  n_prev: 8
+  threshold: 1
+  beta_key: beta
+  state_key: robot_state
+  goal_key: goal_rel
+  prompt: ""
+
+za_adaptor:
+  input_dim: 2048
+  output_dim: 512
+  size: large
+  dropout: 0.0
+  pool: mean
+  target_pool: mean
+  timestep_mode: clean
+  checkpoint_path: OUTPUTS/ltx/za_adaptor_tdmpc/2026_07_15_21_08_43/step_1600/za_adaptor.pt
+
+tdmpc:
+  enabled: true
+  # Set these two fields here, or pass them through TDMPC_PROJECT_ROOT and TDMPC_MODEL_PATH
+  # when running web_infer_scripts/run_za_adaptor_server.sh.
+  project_root: "tdmpc_bridge"
+  model_path: "tdmpc_bridge/checkpoints/801"
+  gpu:
+  tdmpc_cfg_args: ""
+  cfg_overrides:
+    max_angular_vel: 1.0
+  deterministic: true
+  action_format: real
+  velocity_key: velocity
+  velocity_format: real
+  map_key: laser_map
+  map_normalize: auto
+  map_invert: false
+  disable_env_dyn_weight: false
+  return_z: false
+  online_training:
+    enabled: true
+    buffer_size: 20000
+    warmup_steps: 64
+    batch_size: 64
+    updates_per_step: 1
+    lr: 1e-5
+    train_adaptor: true
+    adaptor_lr: 1e-6
+    weight_decay: 0.0
+    dynamics_weight: 1.0
+    bc_weight: 0.1
+    reward_weight: 1.0
+    q_weight: 0.1
+    end_to_end_weight: 1.0
+    end_to_end_dynamics_weight: 1.0
+    end_to_end_bc_weight: 0.1
+    end_to_end_reward_weight: 0.1
+    end_to_end_q_weight: 0.0
+    max_grad_norm: 10.0
+    save_every_updates: 1000
+    save_path: OUTPUTS/tdmpc_online/tdmpc_online.pt
+
+beta_fusion:
+  enabled: true
+  beta_key: beta
+  beta_dim: 10
+  zb_dim: 2048
+  size: large
+  fusion_dim: 1024
+  beta_hidden_dim: 512
+  num_heads: 16
+  num_layers: 2
+  beta_tokens: 8
+  mlp_ratio: 2.0
+  dropout: 0.0
+  beta_pool: mean
+
+diffusion_model:
+  model_path: ltx-video-2b-v0.9.safetensors
+  config:
+    activation_fn: gelu-approximate
+    attention_bias: true
+    attention_head_dim: 64
+    attention_out_bias: true
+    caption_channels: 4096
+    cross_attention_dim: 2048
+    in_channels: 128
+    norm_elementwise_affine: false
+    norm_eps: 1.0e-6
+    num_attention_heads: 32
+    num_layers: 28
+    out_channels: 128
+    patch_size: 1
+    patch_size_t: 1
+    qk_norm: rms_norm_across_heads
+    action_expert: false
+    bev_expert: false
+
+data:
+  train:
+    sample_size: [192, 256]
+    n_previous: 8
+    chunk: 18
+    action_chunk: 108
+  val:
+    sample_size: [192, 256]
+    n_previous: 8
+    chunk: 18
+    action_chunk: 108

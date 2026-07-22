@@ -4,8 +4,8 @@ report_to: None
 tracker_name: ltx_trainer
 
 logging_dir: logs
-output_dir: OUTPUTS/ltx/ltx
-pretrained_model_name_or_path: checkpoints/LTX-Video
+output_dir: OUTPUTS/ltx
+pretrained_model_name_or_path: /mnt/pfs/s7fsio/code/pyl/tau-0/Genie-Envisioner/model
 
 ###
 train_data_class_path: data/lerobot_like_dataset.py
@@ -35,9 +35,9 @@ train_mode: 'video_only'
 action_loss_scale: 1.0
 
 # total training step is decided by the minimum of the below two
-train_steps: 300000
+train_steps: 100000
 train_epochs: 10000
-steps_to_save: 30000
+steps_to_save: 20000
 steps_to_log: 20
 steps_to_val: 2000
 
@@ -59,7 +59,7 @@ caption_dropout_p: 0.06
 # dataloader
 batch_size: 4
 dataloader_num_workers: 8
-pin_memory: True
+pin_memory: True1
 
 gradient_checkpointing: True
 noise_to_first_frame: 0.1
@@ -95,7 +95,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: /mnt/pfs/s7fsio/code/pyl/tau-0/Genie-Envisioner/ltx-video-2b-v0.9.safetensors
+  model_path: /mnt/pfs/s7fsio/code/Genie-Envisioner/OUTPUTS/ltx/action_video/2026_07_07_16_31_47/step_20000
   config:
     activation_fn: gelu-approximate
     attention_bias: true

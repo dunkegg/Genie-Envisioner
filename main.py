@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+import torch.distributed as dist
 from utils import import_custom_class
 
 
@@ -23,7 +24,7 @@ def main():
     Runner = import_custom_class(
         args.runner_class, args.runner_class_path, 
     )
-    
+
 
     if args.mode == "train":
         ### Trainer
@@ -57,6 +58,9 @@ def main():
 
 
 if __name__ == "__main__":
-  
-    main()
+    try:
+        main()
+    finally:
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
     

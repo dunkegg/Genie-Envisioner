@@ -4,15 +4,15 @@ report_to: None
 tracker_name: ltx_trainer
 
 logging_dir: logs
-output_dir: PATH_TO_SAVE_LOGS_AND_CHECKPOINTS
-pretrained_model_name_or_path: PATH_TO_PRETRAINED_WEIGHTS_OF_VAE_AND_TOKENIZER
+output_dir: OUTPUTS/ltx_infer
+pretrained_model_name_or_path: /mnt/pfs/s7fsio/code/pyl/tau-0/Genie-Envisioner/model
 
 
 ###
-train_data_class_path: data/agibotworld_dataset.py
-train_data_class: AgiBotWorld
-val_data_class_path: data/agibotworld_dataset.py
-val_data_class: AgiBotWorld
+train_data_class_path: data/lerobot_like_dataset.py
+train_data_class: CustomLeRobotDataset
+val_data_class_path: data/lerobot_like_dataset.py
+val_data_class: CustomLeRobotDataset
 
 ### 
 tokenizer_class_path: transformers
@@ -96,7 +96,7 @@ flow_mode_scale: 1.29
 pixel_wise_timestep: True
 
 diffusion_model:
-  model_path: PATH_TO_CHECKPOINT_SAFETENSOR
+  model_path: /mnt/pfs/s7fsio/code/Genie-Envisioner/OUTPUTS/ltx/action_video/2026_07_07_16_31_47/step_20000
   config:
     activation_fn: gelu-approximate
     attention_bias: true
@@ -120,9 +120,9 @@ diffusion_model:
 
 data:
   train:
-    data_roots: ["path/to/agibot-world/beta"]
     task_info_root: "root/to/agibot-world/beta/task_info"
-    domains: ["agibotworld", ]
+    data_roots: ["lerobot_data"]
+    domains: ["isaac_lerobot", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -132,14 +132,14 @@ data:
     n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
-    dataset_info_cache_path: "path/to/save/dataset_meta_info_cache"
+    dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train"
     action_type: "delta"
     action_space: "eef"
     # specific_tasks: [543, ]
   val:
-    data_roots: ["path/to/agibot-world/beta"]
     task_info_root: "root/to/agibot-world/beta/task_info"
-    domains: ["agibotworld", ]
+    data_roots: ["lerobot_data"]
+    domains: ["isaac_lerobot", ]
     sample_size: [192, 256]
     sample_n_frames: 900
     preprocess :  'resize'
@@ -149,7 +149,7 @@ data:
     n_previous: 4
     previous_pick_mode: 'random'
     random_crop: False
-    dataset_info_cache_path: "path/to/save/dataset_meta_info_cache"
+    dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val"
     action_type: "delta"
     action_space: "eef"
     # specific_tasks: [543, ]

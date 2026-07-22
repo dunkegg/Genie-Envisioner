@@ -1,0 +1,287 @@
+model_name: 'worldvln_za_adaptor_tdmpc_train'
+is_i2v: True
+report_to: None
+tracker_name: ltx_za_adaptor_tdmpc_trainer
+
+logging_dir: logs
+output_dir: OUTPUTS/worldvln/za_adaptor_tdmpc
+pretrained_model_name_or_path: model
+
+train_data_class_path: data/lerobot_like_dataset.py
+train_data_class: CustomLeRobotDataset
+val_data_class_path: data/lerobot_like_dataset.py
+val_data_class: CustomLeRobotDataset
+
+tokenizer_class_path: transformers
+tokenizer_class: T5Tokenizer
+textenc_class_path: transformers
+textenc_class: T5EncoderModel
+vae_class_path: models/ltx_models/autoencoder_kl_ltx.py
+vae_class: AutoencoderKLLTXVideo
+diffusion_model_class_path: models/ltx_models/transformer_ltx_multiview.py
+diffusion_model_class: LTXVideoTransformer3DModel
+diffusion_scheduler_class_path: diffusers
+diffusion_scheduler_class: FlowMatchEulerDiscreteScheduler
+
+pipeline_class_path: models/pipeline/custom_pipeline.py
+pipeline_class: CustomPipeline
+
+return_action: false
+return_video: false
+return_bev: false
+train_mode: 'za_adaptor_tdmpc_joint'
+
+train_steps: 10000
+train_epochs: 1000
+steps_to_save: 400
+steps_to_log: 20
+steps_to_val: 200
+
+# "latest" scans output_dir/*/step_*/za_adaptor.pt by save time.
+# It restores model, optimizer, LR scheduler and global_step when available.
+#resume_from_checkpoint: latest
+
+mixed_precision: bf16
+allow_tf32: False
+nccl_timeout: 600
+seed: 42
+
+enable_slicing: True
+enable_tiling: True
+caption_dropout_p: 0.0
+
+batch_size: 1
+dataloader_num_workers: 8
+pin_memory: True
+
+gradient_checkpointing: False
+noise_to_first_frame: 0.1
+
+optimizer: adamw
+lr: 1.5e-4
+beta1: 0.9
+beta2: 0.95
+beta3: 0.999
+epsilon: 1e-8
+weight_decay: 1e-5
+optimizer_8bit: False
+optimizer_torchao: False
+scale_lr: False
+
+max_grad_norm: 1.0
+gradient_accumulation_steps: 1
+
+lr_scheduler: constant_with_warmup
+lr_warmup_steps: 50
+lr_num_cycles: 1
+lr_power: 1.0
+
+flow_weighting_scheme: none
+flow_logit_mean: 0.0
+flow_logit_std: 1.0
+flow_mode_scale: 1.29
+
+pixel_wise_timestep: True
+
+# Frozen video predictor from the separate WorldVLN open-source project.
+# Only InfinityStar + its VideoVAE/T5 are used; WorldVLN action heads are not loaded.
+worldvln_video_backbone:
+  enabled: true
+  # Take the final visual hidden states before autoregressive future generation.
+  # This skips the expensive 159-stage video sampling loop.
+  feature_mode: intermediate
+  # Relative paths are anchored at WorldVLN.code. WORLDVLN_ROOT can override this root.
+  worldvln_root: ../../worldWAM/WorldVLN.code
+  runtime_root: Worldmodel/runtime
+  checkpoint_path: train/checkpoints/infinitystar_8b_480p_weights
+  vae_path: train/checkpoints/infinitystar_videovae.pth
+  text_encoder_path: train/checkpoints/text_encoder/flan-t5-xl-official
+  pn: 0.40M
+  fps: 16
+  prediction_frames: 49
+  context_frames: 8
+  output_tokens: 8
+  latent_channels: 4096
+  output_dim: 2048
+  projector_lr: 1.0e-4
+  h_div_w_template: 1.0
+  dynamic_scale_schedule: infinity_elegant_clip4frames_v2_allpt
+  mask_type: infinity_elegant_clip4frames_v2_allpt
+  frames_inner_clip: 4
+  cfg: 34.0
+  tau_image: 1.0
+  tau_video: 0.4
+  top_k: 900
+  top_p: 0.97
+  seed: 42
+
+za_adaptor:
+  input_dim: 2048
+  output_dim: 512
+  size: large
+  dropout: 0.0
+  pool: mean
+  target_pool: last
+  timestep_mode: clean
+  checkpoint_path: null
+
+za_loss:
+  mse_weight: 1.0
+  kl_weight: 0.00005
+  wasserstein_weight: 0.1
+  kl_symmetric: true
+  eps: 1.0e-6
+
+beta_fusion:
+  enabled: true
+  beta_key: beta
+  beta_dim: 10
+  zb_dim: 2048
+  size: large
+  fusion_dim: 1024
+  beta_hidden_dim: 512
+  num_heads: 16
+  num_layers: 2
+  beta_tokens: 8
+  mlp_ratio: 2.0
+  dropout: 0.0
+  beta_pool: mean
+
+# BEV flow-matching DiT after Za-prime. Its loss remains connected through
+# ZaAdaptor and BetaZBFusion, including BetaZBFusionBlock.cross_attn.
+za_bev_dit:
+  enabled: true
+  bev_key: bev_map
+  za_dim: 512
+  channels: 1
+  frames: 18
+  height: 128
+  width: 256
+  # 8x8 patches preserve substantially more local structure than the old 16x16 head.
+  patch_size: 8
+  dim: 512
+  depth: 12
+  num_heads: 8
+  mlp_ratio: 4.0
+  dropout: 0.0
+  # Full-resolution residual CNN for pixel/edge refinement after DiT unpatchify.
+  refine_channels: 32
+  refine_depth: 4
+  loss_weight: 1.0
+  flow_mse_weight: 1.0
+  pixel_mse_weight: 2.0
+  pixel_l1_weight: 0.5
+  edge_l1_weight: 1.0
+  lr: 1.0e-4
+  validation_inference_steps: 50
+  validation_samples: 1
+
+joint_training:
+  train_tdmpc_backbone: false
+  tdmpc_lr: 1e-5
+  tdmpc_bc_weight: 0.1
+  tdmpc_action_index: -1
+  tdmpc_bc_output: "mu"
+  tdmpc_consistency_weight: 0.1
+  tdmpc_consistency_horizon: 8
+  tdmpc_consistency_teacher_forcing: false
+
+tdmpc:
+  enabled: true
+  project_root: "tdmpc_bridge"
+  model_path: "tdmpc_bridge/checkpoints/801"
+  gpu:
+  tdmpc_cfg_args: ""
+  cfg_overrides:
+    max_linear_vel: 2.0
+    max_angular_vel: 1.0
+    max_linear_acc: 0.3
+    max_angular_acc: 0.3
+
+diffusion_model:
+  model_path: ltx-video-2b-v0.9.safetensors
+  config:
+    activation_fn: gelu-approximate
+    attention_bias: true
+    attention_head_dim: 64
+    attention_out_bias: true
+    caption_channels: 4096
+    cross_attention_dim: 2048
+    in_channels: 128
+    norm_elementwise_affine: false
+    norm_eps: 1.0e-6
+    num_attention_heads: 32
+    num_layers: 28
+    out_channels: 128
+    patch_size: 1
+    patch_size_t: 1
+    qk_norm: rms_norm_across_heads
+    action_expert: false
+    bev_expert: false
+
+data:
+  train:
+    data_roots: ["lerobot_data"]
+    domains: ["tdmpc_za_7_20", ]
+    sample_size: [192, 256]
+    sample_n_frames: 900
+    preprocess :  'resize'
+    valid_cam :  ['observation.images.chest']
+    action_key:   "actions"
+    state_key:    "observation.state"
+    za_latent_key: "latent"
+    bev_map_key: "bev_map"
+    za_latent_index_mode: "action"
+    za_latent_tensor_key: null
+    beta_key: "beta"
+    beta_index_mode: "last"
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
+    previous_pick_mode: 'random'
+    random_crop: False
+    dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train_za_tdmpc_7_20"
+    action_type: "absolute"
+    action_space: "joint"
+    stat_file: "lerobot_data/tdmpc_za_7_20/statistics.json"
+    stat_domain: "tdmpc_za"
+  val:
+    data_roots: ["lerobot_data"]
+    domains: ["tdmpc_za_7_20", ]
+    sample_size: [192, 256]
+    sample_n_frames: 900
+    preprocess :  'resize'
+    valid_cam :  ['observation.images.chest']
+    action_key:   "actions"
+    state_key:    "observation.state"
+    za_latent_key: "latent"
+    bev_map_key: "bev_map"
+    za_latent_index_mode: "action"
+    za_latent_tensor_key: null
+    beta_key: "beta"
+    beta_index_mode: "last"
+    chunk: 18
+    action_chunk: 108
+    n_previous: 8
+    previous_pick_mode: 'random'
+    random_crop: False
+    dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val_za_tdmpc_7_20"
+    action_type: "absolute"
+    action_space: "joint"
+    stat_file: "lerobot_data/tdmpc_za_7_20/statistics.json"
+    stat_domain: "tdmpc_za"
+
+use_color_jitter: false
+num_inference_step: 5
+noisy_video: false
+load_weights: true
+
+use_deepspeed: false
+deepspeed:
+  zero_optimization:
+    stage: 2
+  fp16:
+    enabled: false
+  bf16:
+    enabled: true
+  gradient_clipping: 1.0

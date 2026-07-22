@@ -65,12 +65,18 @@ class CustomLeRobotDataset(Dataset):
         action_key = "action",
         state_key = "observation.state",
         bev_map_key = None,
+        za_latent_key = None,
+        za_latent_index_mode = "last",
+        za_latent_tensor_key = None,
+        beta_key = None,
+        beta_index_mode = "last",
         use_unified_prompt = False,
         unified_prompt = "best quality, consistent and smooth motion, realistic, clear and distinct.",
         fix_epiidx = None,
         fix_sidx = None,
         fix_mem_idx = None,
         stat_file = None,
+        stat_domain = None,
     
     ):
         """
@@ -108,6 +114,7 @@ class CustomLeRobotDataset(Dataset):
         fix_sidx:                used in validation stage only, set start index to fix_sidx
         fix_mem_idx:             used in validation stage only, set memory indexes to fix_mem_idx
         stat_file:               used to specific statistics
+        stat_domain:             optional statistics domain name or domain-name map
         """
         
         zero_rank_print(f"loading annotations...")
@@ -122,6 +129,11 @@ class CustomLeRobotDataset(Dataset):
         self.action_key = action_key
         self.state_key = state_key
         self.bev_map_key = bev_map_key
+        self.za_latent_key = za_latent_key
+        self.za_latent_index_mode = za_latent_index_mode
+        self.za_latent_tensor_key = za_latent_tensor_key
+        self.beta_key = beta_key
+        self.beta_index_mode = beta_index_mode
 
         self.random_crop = random_crop
         
@@ -260,23 +272,135 @@ class CustomLeRobotDataset(Dataset):
         if stat_file is not None:
             with open(stat_file, "r") as f:
                 self.StatisticInfo = json.load(f)
+        self.stat_domain = stat_domain
 
         self.ignore_seek = ignore_seek
 
-    def get_bev_map(self, data, indexes):
+    def get_bev_map(self, data, parquet_path, vid_indexes):
         if self.bev_map_key is None:
             return None
         if self.bev_map_key not in data:
             raise KeyError(f"BEV map key '{self.bev_map_key}' not found in parquet data.")
 
+        # Use exactly the same future-frame indexes as RGB (exclude memory frames).
+        future_indexes = vid_indexes[self.n_previous:]
         bev_data = data[self.bev_map_key]
-        map_index = min(int(indexes[-1]), len(bev_data) - 1)
-        bev_map = bev_data.iloc[map_index] if hasattr(bev_data, "iloc") else bev_data[map_index]
+        maps = []
+        for map_index in future_indexes:
+            map_index = min(max(int(map_index), 0), len(bev_data) - 1)
+            bev_map = bev_data.iloc[map_index] if hasattr(bev_data, "iloc") else bev_data[map_index]
+            if isinstance(bev_map, str):
+                candidates = [bev_map]
+                if not os.path.isabs(bev_map):
+                    dataset_root = os.path.dirname(os.path.dirname(os.path.dirname(parquet_path)))
+                    candidates.insert(0, os.path.join(dataset_root, bev_map))
+                bev_path = next((path for path in candidates if os.path.exists(path)), None)
+                if bev_path is None:
+                    raise FileNotFoundError(f"BEV map file not found for value: {bev_map}")
+                bev_map = np.load(bev_path, allow_pickle=False)
+            maps.append(torch.from_numpy(np.array(bev_map, dtype=np.float32, copy=True)))
+        bev_maps = torch.stack(maps, dim=0)
+        # Preserve the uint8 image convention through a reversible [-1,1] normalization.
+        return bev_maps.div(127.5).sub(1.0).unsqueeze(1)
 
-        if isinstance(bev_map, str):
-            bev_map = np.load(bev_map)
-        bev_map = np.asarray(bev_map, dtype=np.float32)
-        return torch.FloatTensor(bev_map)
+    def _load_latent_value(self, latent_value, parquet_path):
+        if isinstance(latent_value, str):
+            candidate_paths = [latent_value]
+            if not os.path.isabs(latent_value):
+                parquet_dir = os.path.dirname(parquet_path)
+                data_dir = os.path.dirname(parquet_dir)
+                domain_root = os.path.dirname(data_dir)
+                candidate_paths = [
+                    os.path.join(parquet_dir, latent_value),
+                    os.path.join(data_dir, latent_value),
+                    os.path.join(domain_root, latent_value),
+                    latent_value,
+                ]
+
+            latent_path = None
+            for candidate in candidate_paths:
+                if os.path.exists(candidate):
+                    latent_path = candidate
+                    break
+            if latent_path is None:
+                raise FileNotFoundError(f"Za latent file not found for value: {latent_value}")
+
+            try:
+                latent_value = torch.load(latent_path, map_location="cpu", weights_only=True)
+            except TypeError:
+                latent_value = torch.load(latent_path, map_location="cpu")
+
+        if isinstance(latent_value, dict):
+            if self.za_latent_tensor_key is not None:
+                latent_value = latent_value[self.za_latent_tensor_key]
+            elif "latent" in latent_value:
+                latent_value = latent_value["latent"]
+            elif "za" in latent_value:
+                latent_value = latent_value["za"]
+            elif "z" in latent_value:
+                latent_value = latent_value["z"]
+            elif len(latent_value) == 1:
+                latent_value = next(iter(latent_value.values()))
+            else:
+                raise KeyError(
+                    "Za latent checkpoint is a dict. Set za_latent_tensor_key to choose the tensor."
+                )
+
+        return torch.as_tensor(latent_value, dtype=torch.float32).flatten()
+
+    def get_za_latents(self, data, parquet_path, vid_indexes, action_indexes):
+        if self.za_latent_key is None:
+            return None
+        if self.za_latent_key not in data:
+            raise KeyError(f"Za latent key '{self.za_latent_key}' not found in parquet data.")
+
+        if self.za_latent_index_mode == "last":
+            latent_indexes = [int(action_indexes[-1])]
+        elif self.za_latent_index_mode == "video":
+            latent_indexes = [int(_) for _ in vid_indexes]
+        elif self.za_latent_index_mode == "action":
+            latent_indexes = [int(_) for _ in action_indexes]
+        else:
+            raise NotImplementedError(f"unsupported za_latent_index_mode: {self.za_latent_index_mode}")
+
+        za_series = data[self.za_latent_key]
+        za_latents = []
+        for latent_index in latent_indexes:
+            latent_index = min(max(latent_index, 0), len(za_series) - 1)
+            latent_value = za_series.iloc[latent_index] if hasattr(za_series, "iloc") else za_series[latent_index]
+            za_latents.append(self._load_latent_value(latent_value, parquet_path))
+
+        za_latents = torch.stack(za_latents, dim=0)
+        if self.za_latent_index_mode == "last":
+            za_latents = za_latents[0]
+        return za_latents
+
+    def get_beta(self, data, vid_indexes, action_indexes):
+        if self.beta_key is None:
+            return None
+        if self.beta_key not in data:
+            raise KeyError(f"Beta key '{self.beta_key}' not found in parquet data.")
+
+        if self.beta_index_mode == "last":
+            beta_indexes = [int(action_indexes[-1])]
+        elif self.beta_index_mode == "video":
+            beta_indexes = [int(_) for _ in vid_indexes]
+        elif self.beta_index_mode == "action":
+            beta_indexes = [int(_) for _ in action_indexes]
+        else:
+            raise NotImplementedError(f"unsupported beta_index_mode: {self.beta_index_mode}")
+
+        beta_series = data[self.beta_key]
+        beta_values = []
+        for beta_index in beta_indexes:
+            beta_index = min(max(beta_index, 0), len(beta_series) - 1)
+            beta_value = beta_series.iloc[beta_index] if hasattr(beta_series, "iloc") else beta_series[beta_index]
+            beta_values.append(torch.from_numpy(np.array(beta_value, dtype=np.float32, copy=True)).flatten())
+
+        beta_values = torch.stack(beta_values, dim=0)
+        if self.beta_index_mode == "last":
+            beta_values = beta_values[0]
+        return beta_values
 
     def get_frame_indexes(self, total_frames, ):
         """
@@ -336,7 +460,21 @@ class CustomLeRobotDataset(Dataset):
 
 
     def get_action_bias_std(self, domain_name):
-        return torch.tensor(self.StatisticInfo[domain_name+"_"+self.action_space]['mean']).unsqueeze(0), torch.tensor(self.StatisticInfo[domain_name+"_"+self.action_space]['std']).unsqueeze(0)+1e-6
+        stat_domain = domain_name
+        if isinstance(self.stat_domain, dict):
+            stat_domain = self.stat_domain.get(domain_name, domain_name)
+        elif self.stat_domain is not None:
+            stat_domain = self.stat_domain
+            if domain_name.endswith("_state") and not stat_domain.endswith("_state"):
+                stat_domain = stat_domain + "_state"
+            elif domain_name.endswith("_delta") and not stat_domain.endswith("_delta"):
+                stat_domain = stat_domain + "_delta"
+        stat_key = stat_domain + "_" + self.action_space
+        if stat_key not in self.StatisticInfo:
+            raise KeyError(
+                f"Statistics key '{stat_key}' not found. Available keys: {sorted(self.StatisticInfo.keys())}"
+            )
+        return torch.tensor(self.StatisticInfo[stat_key]['mean']).unsqueeze(0), torch.tensor(self.StatisticInfo[stat_key]['std']).unsqueeze(0)+1e-6
 
 
     def seek_mp4(self, video_path, cam_name_list, slices):
@@ -511,9 +649,11 @@ class CustomLeRobotDataset(Dataset):
         )
         videos = self.normalize_video(videos, specific_transforms_norm)
 
-        bev_map = self.get_bev_map(data, indexes)
+        bev_map = self.get_bev_map(data, parquet_path, vid_indexes)
+        za_latents = self.get_za_latents(data, parquet_path, vid_indexes, indexes)
+        beta = self.get_beta(data, vid_indexes, indexes)
 
-        return videos, action, caption, state, bev_map
+        return videos, action, caption, state, bev_map, za_latents, beta
 
 
     def __len__(self):
@@ -525,11 +665,11 @@ class CustomLeRobotDataset(Dataset):
         # video, actions, caption, state = self.get_batch(idx)
 
         if self.fix_epiidx is not None:
-            video, actions, caption, state, bev_map = self.get_batch(self.fix_epiidx)
+            video, actions, caption, state, bev_map, za_latents, beta = self.get_batch(self.fix_epiidx)
         else:
             while True:
                 try:
-                    video, actions, caption, state, bev_map = self.get_batch(idx)
+                    video, actions, caption, state, bev_map, za_latents, beta = self.get_batch(idx)
                     break
                 except:
                     ### print error information to debug
@@ -545,4 +685,8 @@ class CustomLeRobotDataset(Dataset):
         )
         if bev_map is not None:
             sample[self.bev_map_key] = bev_map
+        if za_latents is not None:
+            sample["za_latents"] = za_latents
+        if beta is not None:
+            sample["beta"] = beta
         return sample

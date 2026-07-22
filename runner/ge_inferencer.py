@@ -259,7 +259,11 @@ class Inferencer:
                 pd_actions_arr_all = None
                 gt_actions_arr_all = None
 
-
+            if self.args.return_action:
+                ### openloop result visualization
+                fig, axes = plt.subplots(10, 2, figsize=(20, 28), sharex=True)
+                axes = axes.flatten()
+                total_steps = n_chunk_action * self.args.data["train"]["action_chunk"]
 
             for i_chunk_action in range(n_chunk_action):
 
@@ -394,8 +398,6 @@ class Inferencer:
             #     plt.savefig(f'{self.save_folder}/openloop_evaluation_val{i_validation}.png', dpi=300, bbox_inches='tight')
             #     plt.clf()
             if self.args.return_action:
-
-
                 min_len = min(gt_actions_arr_all.shape[0], pd_actions_arr_all.shape[0])
                 gt_actions_arr_all = gt_actions_arr_all[:min_len]
                 pd_actions_arr_all = pd_actions_arr_all[:min_len]
@@ -403,125 +405,28 @@ class Inferencer:
                 x_axis = np.arange(min_len)
                 num_dims = gt_actions_arr_all.shape[-1]
 
-                
-                ### openloop result visualization
-                ncols = 2
-                nrows = int(np.ceil(num_dims / ncols))
-                fig, axes = plt.subplots(nrows, ncols, figsize=(20, 4 * nrows), sharex=True)
-                # axes = axes.flatten()
-                axes = np.array(axes).reshape(-1)
-                total_steps = n_chunk_action * self.args.data["train"]["action_chunk"]
+                for dim_idx in range(num_dims):
+                    ax = axes[dim_idx]
 
+                    ax.plot(x_axis, gt_actions_arr_all[:, dim_idx], label='Ground Truth', color='cornflowerblue', alpha=0.9)
+                    ax.plot(x_axis, pd_actions_arr_all[:, dim_idx], label='Inferred', color='tomato', linestyle='--', alpha=0.9)
 
-                if num_dims == 2:
-                    fig, ax = plt.subplots(figsize=(8, 8))
+                    start_indices = np.arange(0, min_len, self.args.data["train"]["action_chunk"])
 
-                    # Ground Truth
-                    ax.plot(
-                        gt_actions_arr_all[:, 0],
-                        gt_actions_arr_all[:, 1],
-                        '-o',
-                        color='cornflowerblue',
-                        markersize=3,
-                        linewidth=2,
-                        label='Ground Truth'
-                    )
+                    ax.scatter(start_indices, gt_actions_arr_all[start_indices, dim_idx], c='blue', marker='o', s=40, zorder=5, label='GT Start')
+                    ax.scatter(start_indices, pd_actions_arr_all[start_indices, dim_idx], c='darkred', marker='x', s=40, zorder=5, label='Inferred Start')
 
-                    # Prediction
-                    ax.plot(
-                        pd_actions_arr_all[:, 0],
-                        pd_actions_arr_all[:, 1],
-                        '--x',
-                        color='tomato',
-                        markersize=3,
-                        linewidth=2,
-                        label='Prediction'
-                    )
-
-                    # 每个 chunk 起点
-                    start_indices = np.arange(
-                        0,
-                        min_len,
-                        self.args.data["train"]["action_chunk"]
-                    )
-
-                    ax.scatter(
-                        gt_actions_arr_all[start_indices, 0],
-                        gt_actions_arr_all[start_indices, 1],
-                        color='blue',
-                        s=60,
-                        marker='o',
-                        label='GT Chunk Start'
-                    )
-
-                    ax.scatter(
-                        pd_actions_arr_all[start_indices, 0],
-                        pd_actions_arr_all[start_indices, 1],
-                        color='darkred',
-                        s=60,
-                        marker='x',
-                        label='Pred Chunk Start'
-                    )
-
-                    # 起点终点
-                    ax.scatter(
-                        gt_actions_arr_all[0,0],
-                        gt_actions_arr_all[0,1],
-                        color='green',
-                        s=120,
-                        marker='*',
-                        label='GT Start'
-                    )
-
-                    ax.scatter(
-                        gt_actions_arr_all[-1,0],
-                        gt_actions_arr_all[-1,1],
-                        color='navy',
-                        s=120,
-                        marker='s',
-                        label='GT End'
-                    )
-
-                    ax.set_xlabel("X")
-                    ax.set_ylabel("Y")
-                    ax.set_aspect("equal")
-                    ax.grid(True, linestyle=':')
+                    ax.set_title(f"Dimension- {dim_idx}")
+                    ax.set_ylabel('Value')
+                    ax.grid(True, linestyle=':', alpha=0.6)
                     ax.legend()
 
-                    plt.tight_layout()
+                fig.supxlabel(f'Continuous Timestep (across {n_chunk_action} inferences)')
+                plt.tight_layout(rect=[0, 0, 1, 0.98])
+                fig.suptitle('Comparison of Ground Truth and Inferred Actions', fontsize=18)
 
-                    plt.savefig(
-                        f"{self.save_folder}/openloop_xy_val{i_validation}.png",
-                        dpi=300,
-                        bbox_inches='tight'
-                    )
-
-                    plt.close(fig)
-                else:
-                    for dim_idx in range(num_dims):
-                        ax = axes[dim_idx]
-                    
-                        
-                        # ax.axis("off")
-                        ax.plot(x_axis, gt_actions_arr_all[:, dim_idx], label='Ground Truth', color='cornflowerblue', alpha=0.9)
-                        ax.plot(x_axis, pd_actions_arr_all[:, dim_idx], label='Inferred', color='tomato', linestyle='--', alpha=0.9)
-
-                        start_indices = np.arange(0, min_len, self.args.data["train"]["action_chunk"])
-
-                        ax.scatter(start_indices, gt_actions_arr_all[start_indices, dim_idx], c='blue', marker='o', s=40, zorder=5, label='GT Start')
-                        ax.scatter(start_indices, pd_actions_arr_all[start_indices, dim_idx], c='darkred', marker='x', s=40, zorder=5, label='Inferred Start')
-
-                        ax.set_title(f"Dimension- {dim_idx}")
-                        ax.set_ylabel('Value')
-                        ax.grid(True, linestyle=':', alpha=0.6)
-                        ax.legend()
-
-                    fig.supxlabel(f'Continuous Timestep (across {n_chunk_action} inferences)')
-                    plt.tight_layout(rect=[0, 0, 1, 0.98])
-                    fig.suptitle('Comparison of Ground Truth and Inferred Actions', fontsize=18)
-
-                    plt.savefig(f'{self.save_folder}/openloop_evaluation_val{i_validation}.png', dpi=300, bbox_inches='tight')
-                    plt.clf()
+                plt.savefig(f'{self.save_folder}/openloop_evaluation_val{i_validation}.png', dpi=300, bbox_inches='tight')
+                plt.clf()
 
     def infer(self, n_chunk_action=4, n_chunk_video=1, n_validation=10, global_step=0, domain_name="agibotworld"):
         model_save_dir = os.path.join(self.save_folder,f'Inference')
