@@ -471,6 +471,11 @@ class CustomLeRobotDataset(Dataset):
             frame_indexes = mem_indexes + mem_indexes[-1:]
 
         action_indexes = mem_indexes + video_end
+
+        if self.n_previous == 0:
+            frame_indexes = video_end[self.video_temporal_stride - 1::self.video_temporal_stride]
+            action_indexes = video_end
+
         return frame_indexes, action_indexes
 
 
@@ -625,7 +630,10 @@ class CustomLeRobotDataset(Dataset):
 
         if self.use_trajectory_condition:
             try:
-                last_mem_global_idx = int(vid_indexes[self.n_previous - 1])
+                if self.n_previous > 0:
+                    last_mem_global_idx = int(vid_indexes[self.n_previous - 1])
+                else:
+                    last_mem_global_idx = int(vid_indexes[0])  # 用第一个future帧
                 raw_states_for_proj = raw_state_full
 
                 mem_frames = videos[:, :, :self.n_previous]   # (C, V, T_mem, H, W)

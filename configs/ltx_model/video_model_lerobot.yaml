@@ -14,8 +14,8 @@ val_data_class_path: data/lerobot_like_dataset.py
 val_data_class: CustomLeRobotDataset
 
 ###
-use_motion_conditioning: False
-use_text_condition: False
+use_trajectory_condition: true
+use_text_condition: true
 
 ### 
 tokenizer_class_path: transformers
@@ -42,8 +42,8 @@ action_loss_scale: 1.0
 train_steps: 100000
 train_epochs: 10000
 steps_to_save: 20000
-steps_to_log: 20
-steps_to_val: 100
+steps_to_log: 200
+steps_to_val: 1000
 
 mixed_precision: bf16
 allow_tf32: False
@@ -61,7 +61,7 @@ add_state: False ### whether add state to the action chunk
 caption_dropout_p: 0.06
 
 # dataloader
-batch_size: 4
+batch_size: 1
 dataloader_num_workers: 8
 pin_memory: True
 
@@ -121,9 +121,10 @@ diffusion_model:
     action_in_channels: 2
     action_num_attention_heads: 16
     action_attention_head_dim: 32
-    use_motion_conditioning: False
-    action_dim: 2
-    motion_hidden_dim: 256
+    trajectory_conditioning: true
+    trajectory_in_channels: 2
+    max_trajectory_tokens: 256
+    trajectory_cross_attention_every_n_blocks: 4
 
 data:
 ### more details can be found in data/utils/*_dataset.py
@@ -137,9 +138,9 @@ data:
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
     state_key:    "observation.state" 
-    chunk: 18
-    action_chunk: 108
-    n_previous: 8
+    chunk: 9
+    action_chunk: 54
+    n_previous: 0
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/train"
@@ -147,7 +148,7 @@ data:
     action_space: "joint"
     stat_file: "lerobot_data/habitat_lerobot/statistics.json"
     trajectory_debug_dir: "trajectory_debug_dir/ltx/traj_debug"
-    use_trajectory_condition: True
+
   val:
     data_roots: ["lerobot_data"]
     domains: ["habitat_lerobot", ]
@@ -158,9 +159,9 @@ data:
     valid_cam :  ['observation.images.chest']
     action_key:   "actions"
     state_key:    "observation.state" 
-    chunk: 18
-    action_chunk: 108
-    n_previous: 8
+    chunk: 9
+    action_chunk: 54
+    n_previous: 0
     previous_pick_mode: 'random'
     random_crop: False
     dataset_info_cache_path: "OUTPUTS/dataset_meta_info_cache/val"

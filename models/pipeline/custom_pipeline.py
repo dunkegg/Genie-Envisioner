@@ -597,7 +597,10 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
         pixel_wise_timestep: bool = True,
         n_chunk: int = 1,
         show_progress: bool = False,
-        motion_deltas: Optional[torch.Tensor] = None, 
+
+        trajectory_condition: Optional[torch.Tensor] = None,
+        trajectory_attention_mask: Optional[torch.Tensor] = None,
+        trajectory_guidance_scale: Optional[float] = None,
         **kwargs,
     ):
         r"""
@@ -753,7 +756,14 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
         init_latents = retrieve_latents(self.vae.encode(image), generator, sample_mode=sample_mode)
         init_latents = self._normalize_latents(init_latents, self.vae.latents_mean, self.vae.latents_std)
         
-        if mem_size == 1 and n_prev > 1:
+        if n_prev == 0:
+        # 用零latent作为条件
+            init_latents = torch.zeros(
+                batch_size * n_view, init_latents.shape[1], 1,
+                latent_height, latent_width,
+                device=device, dtype=prompt_embeds.dtype
+            )
+        elif mem_size == 1 and n_prev > 1:
             init_latents = init_latents.repeat(1, 1, n_prev, 1, 1)
         else:
             init_latents = rearrange(init_latents, "(b t) c f h w -> b c (t f) h w", t=mem_size)
@@ -809,6 +819,50 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
             self.vae_spatial_compression_ratio,
         )
 
+        ##wzj
+        trajectory_condition_model_input = None
+        trajectory_attention_mask_model_input = None
+
+        if trajectory_condition is not None:
+            trajectory_condition = trajectory_condition.to(
+                device=device,
+                dtype=prompt_embeds.dtype,
+            )
+
+            if trajectory_attention_mask is None:
+                trajectory_attention_mask = torch.ones(
+                    trajectory_condition.shape[:2],
+                    device=device,
+                    dtype=torch.bool,
+                )
+            else:
+                trajectory_attention_mask = trajectory_attention_mask.to(
+                    device=device,
+                    dtype=torch.bool,
+                )
+
+            trajectory_condition_model_input = trajectory_condition
+            trajectory_attention_mask_model_input = trajectory_attention_mask
+
+        if (
+            trajectory_condition is not None
+            and self.do_classifier_free_guidance
+        ):
+            trajectory_condition_model_input = torch.cat(
+                [
+                    torch.zeros_like(trajectory_condition),
+                    trajectory_condition,
+                ],
+                dim=0,
+            )
+
+            trajectory_attention_mask_model_input = torch.cat(
+                [
+                    torch.ones_like(trajectory_attention_mask),
+                    trajectory_attention_mask,
+                ],
+                dim=0,
+            )
 
         # 7. Denoising loop
         if noise_seed:
@@ -898,7 +952,9 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
                         video_attention_mask=video_attention_mask,
                         history_action_state=history_action_state_in,
                         condition_mask=conditioning_mask,
-                        motion_deltas=motion_deltas,
+
+                        trajectory_condition=trajectory_condition_model_input,
+                        trajectory_attention_mask=trajectory_attention_mask_model_input,
                     )[0]
 
 
@@ -918,8 +974,8 @@ class CustomPipeline(DiffusionPipeline, FromSingleFileMixin):
                         video_noise_pred = noise_pred["video"].float()
 
                         if self.do_classifier_free_guidance:
-                            noise_pred_uncond, noise_pred_text = video_noise_pred.chunk(2)
-                            video_noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                            noise_pred_uncond, noise_pred_cond = video_noise_pred.chunk(2)
+                            video_noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_cond - noise_pred_uncond)
                             timestep, _ = timestep.chunk(2)
 
                         # compute the previous noisy sample x_t -> x_t-1

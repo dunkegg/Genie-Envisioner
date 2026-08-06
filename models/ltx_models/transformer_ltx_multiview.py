@@ -239,6 +239,7 @@ class LTXVideoTransformerBlock(nn.Module):
         attention_out_bias: bool = True,
         eps: float = 1e-6,
         elementwise_affine: bool = False,
+        trajectory_conditioning: bool = False
     ):
         super().__init__()
 
@@ -267,7 +268,31 @@ class LTXVideoTransformerBlock(nn.Module):
             qk_norm=qk_norm,
             processor=LTXVideoAttentionProcessor2_0(),
         )
+        ##wzj
+        if trajectory_conditioning:
+            self.norm_trajectory = RMSNorm(
+                dim,
+                eps=eps,
+                elementwise_affine=elementwise_affine,
+            )
 
+            self.attn_trajectory = Attention(
+                query_dim=dim,
+                cross_attention_dim=dim,
+                heads=num_attention_heads,
+                kv_heads=num_attention_heads,
+                dim_head=attention_head_dim,
+                bias=attention_bias,
+                out_bias=attention_out_bias,
+                qk_norm=qk_norm,
+                processor=LTXVideoAttentionProcessor2_0(),
+            )
+
+            # 从0开始，确保刚加载原始LTX时不破坏视频能力
+            self.trajectory_gate = nn.Parameter(
+                torch.tensor(1e-5)
+            )
+        ##wzj
         self.ff = FeedForward(dim, activation_fn=activation_fn)
 
         self.scale_shift_table = nn.Parameter(torch.randn(6, dim) / dim**0.5)
@@ -282,6 +307,10 @@ class LTXVideoTransformerBlock(nn.Module):
         n_view: int = None,
         cross_view_attn: bool = False,
         self_attention_mask: Optional[torch.Tensor] = None,
+
+        #wzj
+        trajectory_hidden_states=None,
+        trajectory_attention_mask=None,
     ) -> torch.Tensor:
         batch_size = hidden_states.size(0)
         norm_hidden_states = self.norm1(hidden_states)
@@ -321,6 +350,33 @@ class LTXVideoTransformerBlock(nn.Module):
             n_view=n_view,
         )
         hidden_states = hidden_states + attn_hidden_states
+
+        #wzj
+        if trajectory_hidden_states is not None:
+            if not hasattr(self, "attn_trajectory"):
+                raise RuntimeError(
+                    "Trajectory states were provided to a block without "
+                    "trajectory conditioning modules."
+            )
+            norm_trajectory_states = self.norm_trajectory(
+                hidden_states
+            )
+
+            trajectory_attn_output = self.attn_trajectory(
+                hidden_states=norm_trajectory_states,
+                encoder_hidden_states=trajectory_hidden_states,
+                image_rotary_emb=None,
+                attention_mask=trajectory_attention_mask,
+                n_view=n_view,
+            )
+
+            hidden_states = (
+                hidden_states
+                + torch.tanh(self.trajectory_gate)
+                * trajectory_attn_output
+            )
+
+
         norm_hidden_states = self.norm2(hidden_states) * (1 + scale_mlp) + shift_mlp
 
         ff_output = self.ff(norm_hidden_states)
@@ -383,9 +439,15 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         use_view_embed: bool = True,
         max_view: int = 3,
         action_expert: bool = False,
-        use_motion_conditioning=True,
-        action_dim=2,
-        motion_hidden_dim=256,
+
+        trajectory_conditioning: bool = False,
+        trajectory_in_channels: int = 2,
+        max_trajectory_tokens: int = 256,
+        trajectory_cross_attention_every_n_blocks: int = 1,
+
+        # use_trajectory_condition=True,
+        # action_dim=2,
+        # motion_hidden_dim=256,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -407,16 +469,55 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                                         )
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
-        # Motion Vector Conditioning Encoder
-        if use_motion_conditioning:
-            self.motion_mlp = nn.Sequential(
-                nn.Linear(action_dim, motion_hidden_dim),
-                nn.SiLU(),
-                nn.Linear(motion_hidden_dim, motion_hidden_dim),
-                nn.SiLU(),
+
+        self.trajectory_conditioning = trajectory_conditioning
+        self.trajectory_in_channels = trajectory_in_channels
+        self.max_trajectory_tokens = max_trajectory_tokens
+
+        if trajectory_cross_attention_every_n_blocks < 1:
+            raise ValueError(
+                "trajectory_cross_attention_every_n_blocks must be >= 1"
             )
-            # cross_attention_dim是text embedding的维度，motion token要对齐到这里
-            self.motion_proj = nn.Linear(motion_hidden_dim, cross_attention_dim)
+        self.trajectory_cross_attention_every_n_blocks = (
+            trajectory_cross_attention_every_n_blocks
+        )
+
+        # # Motion Vector Conditioning Encoder
+        # if use_motion_conditioning:
+        #     self.motion_mlp = nn.Sequential(
+        #         nn.Linear(action_dim, motion_hidden_dim),
+        #         nn.SiLU(),
+        #         nn.Linear(motion_hidden_dim, motion_hidden_dim),
+        #         nn.SiLU(),
+        #     )
+        #     # cross_attention_dim是text embedding的维度，motion token要对齐到这里
+        #     self.motion_proj = nn.Linear(motion_hidden_dim, cross_attention_dim)
+        if self.trajectory_conditioning:
+            self.trajectory_projection = nn.Sequential(
+                nn.Linear(
+                    trajectory_in_channels,
+                    inner_dim,
+                ),
+                nn.SiLU(),
+                nn.Linear(
+                    inner_dim,
+                    inner_dim,
+                ),
+            )
+
+            self.trajectory_pos_embed = nn.Embedding(
+                max_trajectory_tokens,
+                inner_dim,
+            )
+
+            self.trajectory_type_embed = nn.Parameter(
+                torch.zeros(1, 1, inner_dim)
+            )
+
+            self.trajectory_norm = nn.LayerNorm(
+                inner_dim,
+                eps=1e-6,
+            )
 
         self.rope = LTXVideoRotaryPosEmbed(
             dim=inner_dim,
@@ -441,6 +542,7 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                     attention_out_bias=attention_out_bias,
                     eps=norm_eps,
                     elementwise_affine=norm_elementwise_affine,
+                    trajectory_conditioning=trajectory_conditioning,
                 )
                 for _ in range(num_layers)
             ]
@@ -498,7 +600,10 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
         num_frames: int = None,
         height: int = None,
         width: int = None,
-        motion_deltas: Optional[torch.Tensor] = None,
+
+        #wzj
+        trajectory_condition: torch.Tensor = None,
+        trajectory_attention_mask: torch.Tensor = None,
         **kwargs,
     ) -> torch.Tensor:
 
@@ -518,6 +623,10 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
             if video_attention_mask is not None and video_attention_mask.ndim == 2:
                 video_attention_mask = (1 - video_attention_mask.to(hidden_states.dtype)) * -10000.0
                 video_attention_mask = video_attention_mask.unsqueeze(0)  # shape 1, l_q, l_k
+            if (trajectory_attention_mask is not None and trajectory_attention_mask.ndim == 2):
+                trajectory_attention_mask = (1 - trajectory_attention_mask.to(hidden_states.dtype)) * -10000.0
+                trajectory_attention_mask = trajectory_attention_mask.unsqueeze(1)
+
 
             batch_size = hidden_states.size(0)
             hidden_states = self.proj_in(hidden_states)
@@ -543,61 +652,61 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
             encoder_hidden_states = encoder_hidden_states.view(hidden_states.size(0) // n_view, -1, hidden_states.size(-1))
             # 此时 encoder_hidden_states: [B, seq_len, inner_dim]
 
-            # Motion conditioning
-            if hasattr(self, "motion_mlp") and motion_deltas is not None:
-                # motion_deltas: [B, T-1, action_dim]
-                # encoder_hidden_states: [B, seq_len, inner_dim]
-                # 两者batch维度都是B，直接使用
-                # print(f"[transformer] motion_deltas shape: {motion_deltas.shape}")
-                # print(f"[transformer] encoder_hidden_states shape: {encoder_hidden_states.shape}")
+        #     # Motion conditioning
+        #     if hasattr(self, "motion_mlp") and motion_deltas is not None:
+        #         # motion_deltas: [B, T-1, action_dim]
+        #         # encoder_hidden_states: [B, seq_len, inner_dim]
+        #         # 两者batch维度都是B，直接使用
+        #         # print(f"[transformer] motion_deltas shape: {motion_deltas.shape}")
+        #         # print(f"[transformer] encoder_hidden_states shape: {encoder_hidden_states.shape}")
                 
-                motion_tokens = self.motion_mlp(motion_deltas)        # [B, T-1, motion_hidden_dim]
-                motion_tokens = self.motion_proj(motion_tokens)        # [B, T-1, inner_dim]
-                #zzb
-                bsz = encoder_hidden_states.shape[0]
-                if motion_tokens.shape[0] != bsz:
-                    repeat_factor = bsz // motion_tokens.shape[0]
-                    if repeat_factor == 2:
-                        # 前半部分是无条件（uncond），动作特征必须强制清零！
-                        # 后半部分是有条件（cond），给真实的动作特征。
-                        uncond_motion = torch.zeros_like(motion_tokens)
-                        motion_tokens = torch.cat([uncond_motion, motion_tokens], dim=0)
-                    else:
-                        # 应对其他非标准情况
-                        motion_tokens = motion_tokens.repeat(repeat_factor, 1, 1)
-                #debug
-                # motion_tokens.retain_grad()
-                # self.saved_motion_tokens = motion_tokens
-                # print("motion_tokens.requires_grad =", motion_tokens.requires_grad)
-                # print("motion_tokens.grad_fn =", motion_tokens.grad_fn)
-                # print(f"[transformer] motion_tokens shape: {motion_tokens.shape}")
-                #concate顺序更改
-                encoder_hidden_states = torch.cat(
-                    [motion_tokens, encoder_hidden_states], dim=1
-                )  # [B, seq_len + T-1, inner_dim]
+        #         motion_tokens = self.motion_mlp(motion_deltas)        # [B, T-1, motion_hidden_dim]
+        #         motion_tokens = self.motion_proj(motion_tokens)        # [B, T-1, inner_dim]
+        #         #zzb
+        #         bsz = encoder_hidden_states.shape[0]
+        #         if motion_tokens.shape[0] != bsz:
+        #             repeat_factor = bsz // motion_tokens.shape[0]
+        #             if repeat_factor == 2:
+        #                 # 前半部分是无条件（uncond），动作特征必须强制清零！
+        #                 # 后半部分是有条件（cond），给真实的动作特征。
+        #                 uncond_motion = torch.zeros_like(motion_tokens)
+        #                 motion_tokens = torch.cat([uncond_motion, motion_tokens], dim=0)
+        #             else:
+        #                 # 应对其他非标准情况
+        #                 motion_tokens = motion_tokens.repeat(repeat_factor, 1, 1)
+        #         #debug
+        #         # motion_tokens.retain_grad()
+        #         # self.saved_motion_tokens = motion_tokens
+        #         # print("motion_tokens.requires_grad =", motion_tokens.requires_grad)
+        #         # print("motion_tokens.grad_fn =", motion_tokens.grad_fn)
+        #         # print(f"[transformer] motion_tokens shape: {motion_tokens.shape}")
+        #         #concate顺序更改
+        #         encoder_hidden_states = torch.cat(
+        #             [motion_tokens, encoder_hidden_states], dim=1
+        #         )  # [B, seq_len + T-1, inner_dim]
 
-                if encoder_attention_mask is not None:
-                    # encoder_attention_mask 当前已经是 attention bias
-                    # shape: [B, 1, 128]
+        #         if encoder_attention_mask is not None:
+        #             # encoder_attention_mask 当前已经是 attention bias
+        #             # shape: [B, 1, 128]
 
-                    motion_mask = torch.zeros(
-                        encoder_attention_mask.shape[0],
-                        1,
-                        motion_tokens.shape[1],
-                        dtype=encoder_attention_mask.dtype,
-                        device=encoder_attention_mask.device,
-                    )
+        #             motion_mask = torch.zeros(
+        #                 encoder_attention_mask.shape[0],
+        #                 1,
+        #                 motion_tokens.shape[1],
+        #                 dtype=encoder_attention_mask.dtype,
+        #                 device=encoder_attention_mask.device,
+        #             )
 
-                    encoder_attention_mask = torch.cat(
-                        [motion_mask, encoder_attention_mask],
-                        dim=-1,
-                    )
-                    # print(
-                    #     "[transformer] encoder_attention_mask after cat:",
-                    #     encoder_attention_mask.shape,
-                    # )
-        #debug
-        # print(motion_tokens.abs().mean())
+        #             encoder_attention_mask = torch.cat(
+        #                 [motion_mask, encoder_attention_mask],
+        #                 dim=-1,
+        #             )
+        #             # print(
+        #             #     "[transformer] encoder_attention_mask after cat:",
+        #             #     encoder_attention_mask.shape,
+        #             # )
+        # #debug
+        # # print(motion_tokens.abs().mean())
 
         if return_action:
             ### when video_states_buffer is not None, action blocks will directly use the input buffers
@@ -609,39 +718,204 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                 action_timestep = torch.cat((torch.zeros_like(action_timestep[:,0:1]), action_timestep), dim=1)
             action_temb, action_embedded_timestep, action_rotary_emb, action_hidden_states = preprocessing_action_states(self, action_states, action_timestep)
 
+        #wzj
+        trajectory_hidden_states = None
+
+        if trajectory_condition is not None:
+            if not self.trajectory_conditioning:
+                raise RuntimeError(
+                    "trajectory_condition is provided, but "
+                    "trajectory_conditioning=False"
+                )
+
+            if trajectory_condition.ndim != 3:
+                raise ValueError(
+                    "trajectory_condition must be [B, K, 2], "
+                    f"got {tuple(trajectory_condition.shape)}"
+                )
+
+            _, traj_length, traj_dim = trajectory_condition.shape
+
+            if traj_dim != self.trajectory_in_channels:
+                raise ValueError(
+                    f"Expected trajectory dim "
+                    f"{self.trajectory_in_channels}, got {traj_dim}"
+                )
+
+            if traj_length > self.max_trajectory_tokens:
+                raise ValueError(
+                    f"Trajectory length {traj_length} exceeds "
+                    f"max_trajectory_tokens={self.max_trajectory_tokens}"
+                )
+
+            expected_batch = hidden_states.shape[0] // n_view
+            if trajectory_condition.shape[0] != expected_batch:
+                raise ValueError(
+                    f"Trajectory batch={trajectory_condition.shape[0]}, "
+                    f"but expected batch={expected_batch} "
+                    f"from video batch={hidden_states.shape[0]} and n_view={n_view}"
+                )
+
+            trajectory_condition = trajectory_condition.to(
+                device=hidden_states.device,
+                dtype=hidden_states.dtype,
+            )
+
+            trajectory_hidden_states = self.trajectory_projection(
+                trajectory_condition
+            )
+
+            trajectory_positions = torch.arange(
+                traj_length,
+                device=trajectory_condition.device,
+            )
+
+            trajectory_hidden_states = (
+                trajectory_hidden_states
+                + self.trajectory_pos_embed(trajectory_positions)[None]
+                + self.trajectory_type_embed
+            )
+
+            trajectory_hidden_states = self.trajectory_norm(
+                trajectory_hidden_states
+            )
+
         for block_idx, block in enumerate(self.transformer_blocks):
-            
+
+
+            use_trajectory_this_block = (
+                trajectory_hidden_states is not None
+                and block_idx % self.trajectory_cross_attention_every_n_blocks == 0
+            )
+
+            block_trajectory_states = (
+                trajectory_hidden_states
+                if use_trajectory_this_block
+                else None
+            )
+            # if block_idx == 0 and not hasattr(self, "_printed_traj_shape"):
+            #     print(
+            #         "block0 trajectory states:",
+            #         None if block_trajectory_states is None
+            #         else block_trajectory_states.shape
+            #     )
+            #     self._printed_traj_shape = True
+
+            block_trajectory_mask = (
+                trajectory_attention_mask
+                if use_trajectory_this_block
+                else None
+            )
+            ####wzj
             if torch.is_grad_enabled() and self.gradient_checkpointing:
 
-                def create_custom_forward(module, return_dict=None):
-                    def custom_forward(*inputs):
-                        if return_dict is not None:
-                            return module(*inputs, return_dict=return_dict)
-                        else:
-                            return module(*inputs)
+                ckpt_kwargs: Dict[str, Any] = {
+                    "use_reentrant": False
+                } if is_torch_version(">=", "1.11.0") else {}
 
-                    return custom_forward
-
-                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                
                 if return_video or store_buffer:
-                    hidden_states = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        encoder_hidden_states,
-                        temb,
-                        image_rotary_emb,
-                        encoder_attention_mask,
-                        n_view,
-                        # TODO: we always set cross_view_attn=True in this case
-                        block_idx%3==0,
-                        video_attention_mask,
-                        **ckpt_kwargs,
-                    )
+                    current_block = block
+                    current_cross_view = block_idx % 3 == 0
+                    current_trajectory_states = block_trajectory_states
+                    current_trajectory_mask = block_trajectory_mask
+
+                    if block_trajectory_states is not None:
+
+                        def custom_video_block_forward(
+                            hidden_states_,
+                            encoder_hidden_states_,
+                            temb_,
+                            image_rotary_emb_,
+                            trajectory_hidden_states_,
+                        ):
+                            return current_block(
+                                hidden_states=hidden_states_,
+                                encoder_hidden_states=encoder_hidden_states_,
+                                temb=temb_,
+                                image_rotary_emb=image_rotary_emb_,
+                                encoder_attention_mask=encoder_attention_mask,
+                                n_view=n_view,
+                                cross_view_attn=current_cross_view,
+                                self_attention_mask=video_attention_mask,
+                                trajectory_hidden_states=trajectory_hidden_states_,
+                                trajectory_attention_mask=current_trajectory_mask,
+                            )
+
+                        hidden_states = torch.utils.checkpoint.checkpoint(
+                            custom_video_block_forward,
+                            hidden_states,
+                            encoder_hidden_states,
+                            temb,
+                            image_rotary_emb,
+                            block_trajectory_states,
+                            **ckpt_kwargs,
+                        )
+                    else:
+                        def custom_video_block_forward(
+                            hidden_states_,
+                            encoder_hidden_states_,
+                            temb_,
+                            image_rotary_emb_,
+                        ):
+                            return current_block(
+                                hidden_states=hidden_states_,
+                                encoder_hidden_states=encoder_hidden_states_,
+                                temb=temb_,
+                                image_rotary_emb=image_rotary_emb_,
+                                encoder_attention_mask=encoder_attention_mask,
+                                n_view=n_view,
+                                cross_view_attn=current_cross_view,
+                                self_attention_mask=video_attention_mask,
+                                trajectory_hidden_states=None,
+                                trajectory_attention_mask=None,
+                            )
+
+                        hidden_states = torch.utils.checkpoint.checkpoint(
+                            custom_video_block_forward,
+                            hidden_states,
+                            encoder_hidden_states,
+                            temb,
+                            image_rotary_emb,
+                            **ckpt_kwargs,
+                        )
+
                     if store_buffer:
-                        video_states_buffer.append(hidden_states.clone())
+                        video_states_buffer.append(
+                            hidden_states.clone()
+                        )
                 else:
                     hidden_states = video_states_buffer[block_idx]
+            # if torch.is_grad_enabled() and self.gradient_checkpointing:
+
+            #     def create_custom_forward(module, return_dict=None):
+            #         def custom_forward(*inputs):
+            #             if return_dict is not None:
+            #                 return module(*inputs, return_dict=return_dict)
+            #             else:
+            #                 return module(*inputs)
+
+            #         return custom_forward
+
+            #     ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                
+            #     if return_video or store_buffer:
+            #         hidden_states = torch.utils.checkpoint.checkpoint(
+            #             create_custom_forward(block),
+            #             hidden_states,
+            #             encoder_hidden_states,
+            #             temb,
+            #             image_rotary_emb,
+            #             encoder_attention_mask,
+            #             n_view,
+            #             # TODO: we always set cross_view_attn=True in this case
+            #             block_idx%3==0,
+            #             video_attention_mask,
+            #             **ckpt_kwargs,
+            #         )
+            #         if store_buffer:
+            #             video_states_buffer.append(hidden_states.clone())
+            #     else:
+            #         hidden_states = video_states_buffer[block_idx]
                 
 
                 if return_action:
@@ -660,6 +934,17 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                     )
             else:
                 if return_video or store_buffer:
+                    # hidden_states = block(
+                    #     hidden_states=hidden_states,
+                    #     encoder_hidden_states=encoder_hidden_states,
+                    #     temb=temb,
+                    #     image_rotary_emb=image_rotary_emb,
+                    #     encoder_attention_mask=encoder_attention_mask,
+                    #     n_view=n_view,
+                    #     # TODO: we always set cross_view_attn=True in this case
+                    #     cross_view_attn=block_idx%3==0,
+                    #     self_attention_mask=video_attention_mask,
+                    # )
                     hidden_states = block(
                         hidden_states=hidden_states,
                         encoder_hidden_states=encoder_hidden_states,
@@ -667,9 +952,11 @@ class LTXVideoTransformer3DModel(ModelMixin, ConfigMixin, FromOriginalModelMixin
                         image_rotary_emb=image_rotary_emb,
                         encoder_attention_mask=encoder_attention_mask,
                         n_view=n_view,
-                        # TODO: we always set cross_view_attn=True in this case
-                        cross_view_attn=block_idx%3==0,
+                        cross_view_attn=block_idx % 3 == 0,
                         self_attention_mask=video_attention_mask,
+
+                        trajectory_hidden_states=block_trajectory_states,
+                        trajectory_attention_mask=block_trajectory_mask,
                     )
                     if store_buffer:
                         video_states_buffer.append(hidden_states.clone())

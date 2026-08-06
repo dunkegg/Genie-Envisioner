@@ -272,6 +272,12 @@ class Inferencer:
                 prompt = batch['caption']
                 gt_video = batch['video']
 
+                trajectory = batch["actions"][
+                    :batch_size,
+                    -self.args.data["train"]["action_chunk"]:,
+                    :2,
+                ]
+
                 b, c, v, t, h, w = image.shape
 
                 negative_prompt = ''
@@ -311,7 +317,7 @@ class Inferencer:
                     pixel_wise_timestep = self.args.pixel_wise_timestep,
                     n_chunk=n_chunk_video,
                     action_dim=self.args.diffusion_model["config"]["action_in_channels"] if self.args.return_action else None,
-                    motion_deltas=None,
+                    trajectory_condition=trajectory,
                 )[0]
 
                 save_cap = f'Validation_{i_validation}'

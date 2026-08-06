@@ -553,8 +553,13 @@ class Trainer:
                     source = batch['video_with_traj'] if use_traj else batch['video']
                     source = source.to(accelerator.device, dtype=weight_dtype).contiguous()
                     source = rearrange(source, 'b c v t h w -> (b v) c t h w')
-                    mem = source[:, :, :mem_size]
-                    future_video = video[:,:,mem_size:]
+                    if mem_size > 0:
+                        mem = source[:, :, :mem_size]
+                        future_video = video[:, :, mem_size:]
+                    else:
+                        # 没有历史帧，造一个全零的占位 mem
+                        mem = torch.zeros_like(video[:, :, :1])
+                        future_video = video
 
                     if self.args.return_action:
                         future_video = future_video[:,:,:1].repeat(1,1,self.args.data['train']['chunk'],1,1)
@@ -574,9 +579,13 @@ class Trainer:
                         self.vae, mem, future_video
                     )
 
-                    mem_latents = rearrange(mem_latents, '(b v m) (h w) c -> (b v) c m h w', b=batch_size, m=mem_size, h=latent_height)
-                    future_video_latents = rearrange(future_video_latents, '(b v) (f h w) c -> (b v) c f h w',b=batch_size,h=latent_height,w=latent_width)
-                    latents = torch.cat((mem_latents, future_video_latents), dim=2)  #todo : no actions input
+                    if mem_size > 0:
+                        mem_latents = rearrange(mem_latents, '(b v m) (h w) c -> (b v) c m h w', b=batch_size, m=mem_size, h=latent_height)
+                        future_video_latents = rearrange(future_video_latents, '(b v) (f h w) c -> (b v) c f h w', b=batch_size, h=latent_height, w=latent_width)
+                        latents = torch.cat((mem_latents, future_video_latents), dim=2)
+                    else:
+                        future_video_latents = rearrange(future_video_latents, '(b v) (f h w) c -> (b v) c f h w', b=batch_size, h=latent_height, w=latent_width)
+                        latents = future_video_latents
 
                     # ######################################### action input
                     # # add action condition for video generation
@@ -675,17 +684,63 @@ class Trainer:
                         noisy_actions = None
                         act_state = None
 
-                    # 计算motion delta用于motion conditioning
-                    if getattr(self.args, 'use_motion_conditioning', False):
-                        actions_full = batch['actions'].to(accelerator.device, dtype=weight_dtype)
-                        motion_deltas = actions_full[:, 1:] - actions_full[:, :-1]  # [B, T-1, action_dim]
+                    # # 计算motion delta用于motion conditioning
+                    # if getattr(self.args, 'use_motion_conditioning', False):
+                    #     actions_full = batch['actions'].to(accelerator.device, dtype=weight_dtype)
+                    #     motion_deltas = actions_full[:, 1:] - actions_full[:, :-1]  # [B, T-1, action_dim]
+                    # else:
+                    #     motion_deltas = None
+                    if getattr(self.args, "use_trajectory_condition", False):
+                        trajectory_condition = batch["actions"].to(
+                            accelerator.device,
+                            dtype=weight_dtype,
+                        ).contiguous()  # [B, T, 2]
+
+                        if trajectory_condition.ndim != 3:
+                            raise ValueError(
+                                "trajectory_condition must have shape [B, T, 2], "
+                                f"but got {tuple(trajectory_condition.shape)}"
+                            )
+
+                        if trajectory_condition.shape[-1] != 2:
+                            raise ValueError(
+                                "Expected 2D trajectory points, "
+                                f"but got dim={trajectory_condition.shape[-1]}"
+                            )
+
+                        trajectory_length = self.args.data["train"]["action_chunk"]
+
+                        # 只保留当前训练窗口对应的未来轨迹
+                        trajectory_condition = trajectory_condition[
+                            :, -trajectory_length:, :
+                        ]  # [B, K, 2]
+
+                        trajectory_type = getattr(
+                            self.args,
+                            "trajectory_type",
+                            "relative_waypoint",
+                        )
                     else:
-                        motion_deltas = None
+                        trajectory_condition = None
 
                     # shape:  bv, l, c and bv, l
-                    noise, conditioning_mask, cond_indicator = gen_noise_from_condition_frame_latent(
-                        mem_latents, latent_frames, latent_height, latent_width, noise_to_condition_frames=self.args.noise_to_first_frame
-                    )  # set initial frames noise to 0
+                    if mem_size > 0:
+                        noise, conditioning_mask, cond_indicator = gen_noise_from_condition_frame_latent(
+                            mem_latents, latent_frames, latent_height, latent_width, 
+                            noise_to_condition_frames=self.args.noise_to_first_frame
+                        )
+                    else:
+                        # 没有条件帧，全部当作噪声帧
+                        noise = randn_tensor(latents.shape, device=accelerator.device, dtype=weight_dtype)
+                        conditioning_mask = torch.zeros(
+                            latents.shape[0], latents.shape[1], 
+                            device=accelerator.device, dtype=weight_dtype
+                        )
+                        cond_indicator = torch.zeros(
+                            latents.shape[0], latent_frames,
+                            device=accelerator.device, dtype=weight_dtype
+                        )
+                    # set initial frames noise to 0
                     if self.args.pixel_wise_timestep:
                         # shape: bv, thw
                         timesteps = timesteps.unsqueeze(-1) * (1 - conditioning_mask)
@@ -707,7 +762,16 @@ class Trainer:
 
                     #debug
                     # print(f"[trainer] motion_deltas: {motion_deltas is not None}, shape: {motion_deltas.shape if motion_deltas is not None else None}")
-
+                    if global_step == 0 and accelerator.is_main_process:
+                        print(
+                            "use_trajectory_condition:",
+                            getattr(self.args, "use_trajectory_condition", False),
+                        )
+                        print(
+                            "trajectory_condition:",
+                            None if trajectory_condition is None
+                            else trajectory_condition.shape,
+                        )
                     pred_all = forward_pass(
                         model=self.diffusion_model, 
                         timesteps=timesteps, 
@@ -725,7 +789,7 @@ class Trainer:
                         video_attention_mask=video_attention_mask,
                         history_action_state=act_state,
                         condition_mask=conditioning_mask,
-                        motion_deltas=motion_deltas,
+                        trajectory_condition=trajectory_condition,
                     )['latents']
 
                     if self.args.train_mode == 'all' or self.args.train_mode == 'video_only':
@@ -752,14 +816,39 @@ class Trainer:
 
                     assert torch.isnan(loss) == False, "NaN loss detected"
                     accelerator.backward(loss)
-                    #debug
-                    # if self.diffusion_model.module.motion_mlp[0].weight.grad is None:
-                    #         print("motion_mlp grad = None")
-                    # else:
-                    #     print(
-                    #         "motion grad:",
-                    #         self.diffusion_model.module.motion_mlp[0].weight.grad.abs().mean().item()
-                    #     )
+                    # #wzj
+                    # if (
+                    #     accelerator.is_main_process
+                    #     and global_step % 500 == 0
+                    #     and accelerator.sync_gradients
+                    # ):
+                    
+                    #     from deepspeed.utils import safe_get_full_grad
+
+                    #     model = accelerator.unwrap_model(self.diffusion_model)
+
+                    #     for idx in range(
+                    #         0,
+                    #         len(model.transformer_blocks),
+                    #         model.trajectory_cross_attention_every_n_blocks,
+                    #     ):
+                    #         param = model.transformer_blocks[idx].trajectory_gate
+                    #         grad = safe_get_full_grad(param)
+
+                    #         if accelerator.is_main_process:
+                    #             grad_value = (
+                    #                 None
+                    #                 if grad is None
+                    #                 else grad.detach().float().abs().mean().item()
+                    #             )
+
+                    #             print(
+                    #                 f"block={idx}, "
+                    #                 f"gate={param.detach().float().item():.8e}, "
+                    #                 f"requires_grad={param.requires_grad}, "
+                    #                 f"grad={grad_value}"
+                    #             )
+
                     if accelerator.sync_gradients and accelerator.distributed_type != DistributedType.DEEPSPEED:
                         grad_norm = accelerator.clip_grad_norm_(self.diffusion_model.parameters(), self.args.max_grad_norm)
                         logs["grad_norm"] = grad_norm
